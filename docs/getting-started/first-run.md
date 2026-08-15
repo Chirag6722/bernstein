@@ -61,16 +61,23 @@ bernstein init
 Expected output:
 
 ```
-✓ Initialized .sdd/ state directory
-✓ Created bernstein.yaml (edit to configure agents and budget)
-✓ Ready - run `bernstein -g "your goal"` to start
+Created .sdd/config.yaml
+Created bernstein.yaml
+Created templates/ (default roles & prompts)
+Created .gitignore (added .sdd/runtime/)
+
+Done. Next steps:
+  1. Edit bernstein.yaml: set a goal
+  2. Run bernstein to start the orchestra
 ```
 
-Two things happened:
+Four things happened:
 
 - **`.sdd/`** - your file-based state directory (backlog, logs, metrics, signals). This is
   the single source of truth. Inspect it, back it up, recover from it.
 - **`bernstein.yaml`** - your project config. The defaults are fine for a first run.
+- **`templates/`** - the default role prompts, copied in so you can edit them per project.
+- **`.gitignore`** - created or appended to, so `.sdd/runtime/` stays out of git.
 
 A minimal `bernstein.yaml` looks like:
 

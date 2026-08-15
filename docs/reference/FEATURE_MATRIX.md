@@ -225,7 +225,7 @@ test, and a row naming a command the CLI no longer registers fails it too.
 |---|---|---|---|
 | `bernstein -g GOAL` | Full | 3 | Inline goal |
 | `bernstein run plan.yaml` | Full | 3 | Plan file execution |
-| `bernstein init` | Full | 2 | Workspace setup |
+| `bernstein init` | Full | 3 | Workspace setup. The documented first run is covered by `tests/integration/test_first_run_documented_path.py`, which runs the command from an empty directory and asserts the output `first-run.md` promises. |
 | `bernstein stop` | Full | 3 | Graceful/force stop |
 | `bernstein live` | Full | 2 | TUI dashboard |
 | `bernstein dashboard` | Full | 3 | Web dashboard |
@@ -244,8 +244,8 @@ test, and a row naming a command the CLI no longer registers fails it too.
 | [`bernstein replay ID`](../operations/replay.md) | Full | 3 | Deterministic replay |
 | [`bernstein checkpoint`](../operations/checkpoint.md) | Full | 3 | Session snapshot |
 | [`bernstein wrap-up`](../operations/wrap-up.md) | Full | 3 | End session with summary |
-| `bernstein demo` | Full | 2 | Zero-config demo |
-| [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | 2 | Flask TODO demo (3 tasks). `bernstein quickstart` is a deprecated alias, removed in v4.0.0. |
+| `bernstein demo` | Full | 2 | **Preview.** Zero-config demo. A cold first run exits 1 with `Task server on port 8055 did not respond within 10.0s` and an empty `server.log`: the readiness budget in `bootstrap.py` is a fixed 10s, which a first-ever import of the package can exceed while Python byte-compiles it. A second run on a warm cache starts the server in under a second. On a Windows console using a legacy code page the command also aborts with `UnicodeEncodeError` on the `✓` it prints first. |
+| [`bernstein demo --flask-todo`](../getting-started/quickstart-demo.md) | Full | 2 | **Preview.** Flask TODO demo (3 tasks). `bernstein quickstart` is a deprecated alias, removed in v4.0.0. The run exits 0 while completing none of its tasks: all three seeded tasks fail, the task server dies and restarts mid-run, and the summary reports `Tasks completed 0 / 0` — a denominator that ignores the three tasks it seeded. |
 | `bernstein agents ...` | Full | 3 | Catalog management |
 | `bernstein evolve ...` | Full | 2 | **Preview.** A clean directory exits before the evolution loop starts because `.sdd/` is missing; initialise a Bernstein workspace first. |
 | `bernstein ci fix` | Full | 3 | CI autofix |
