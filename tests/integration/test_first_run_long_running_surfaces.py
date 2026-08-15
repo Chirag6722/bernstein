@@ -58,6 +58,18 @@ def _spawn(workdir: Path, log: Path, *args: str, env: dict[str, str] | None = No
     )
 
 
+def _flat(text: str) -> str:
+    """Collapse whitespace so a match cannot be broken by line wrapping.
+
+    These surfaces print through Rich, which wraps at the terminal width.
+    That width differs between a developer's terminal and a CI runner, so
+    a phrase that is contiguous locally can arrive split across a newline
+    - matching on the raw text makes the assertion depend on console
+    geometry rather than on what the command said.
+    """
+    return " ".join(text.split())
+
+
 def _wait_for_signal(log: Path, *needles: str, timeout_s: float = _READY_TIMEOUT_S) -> str:
     """Block until every needle appears in *log*. Returns the text read.
 
@@ -70,7 +82,7 @@ def _wait_for_signal(log: Path, *needles: str, timeout_s: float = _READY_TIMEOUT
     while time.monotonic() < deadline:
         if log.exists():
             text = log.read_text(encoding="utf-8", errors="replace")
-            if all(needle in text for needle in needles):
+            if all(needle in _flat(text) for needle in needles):
                 return text
         time.sleep(0.1)
     raise AssertionError(f"readiness signal {needles!r} never appeared within {timeout_s}s. Output was:\n{text}")
@@ -125,7 +137,7 @@ class TestLiveFirstRun:
             _terminate(process)
 
         output = log.read_text(encoding="utf-8", errors="replace")
-        assert "Traceback (most recent call last)" not in output, output[-2000:]
+        assert "Traceback (most recent call last)" not in _flat(output), output[-2000:]
         assert not (tmp_path / ".sdd" / "runtime" / "server.pid").exists()
 
 
@@ -148,8 +160,8 @@ class TestWorkerFirstRun:
 
         assert exit_code == 1
         output = log.read_text(encoding="utf-8", errors="replace")
-        assert "is not a git repository" in output
-        assert "Traceback (most recent call last)" not in output, output[-2000:]
+        assert "is not a git repository" in _flat(output), output[-2000:]
+        assert "Traceback (most recent call last)" not in _flat(output), output[-2000:]
 
     def test_registers_against_a_live_server(self, tmp_path: Path, unused_tcp_port: int) -> None:
         """Readiness: the server accepted the registration and named the node."""
@@ -182,7 +194,8 @@ class TestWorkerFirstRun:
         finally:
             _terminate(server)
 
-        assert "Traceback (most recent call last)" not in worker_log.read_text(encoding="utf-8", errors="replace")
+        worker_output = worker_log.read_text(encoding="utf-8", errors="replace")
+        assert "Traceback (most recent call last)" not in _flat(worker_output), worker_output[-2000:]
 
 
 @pytest.fixture
