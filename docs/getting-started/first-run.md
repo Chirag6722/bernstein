@@ -172,6 +172,14 @@ bernstein demo --real     # use real agents (requires API key, ~$0.15)
 This is the fastest way to see the orchestrator move tasks through the lifecycle without
 configuring anything.
 
+> **Preview.** Two known first-run failures: a cold run can exceed the task-server
+> readiness budget and exit 1 (tracked from
+> [#3825](https://github.com/sipyourdrink-ltd/bernstein/issues/3825)), and on a
+> Windows console using a legacy code page the command aborts with a
+> `UnicodeEncodeError` on the first `✓` it prints
+> ([#3901](https://github.com/sipyourdrink-ltd/bernstein/issues/3901)). A second
+> run on a warm cache starts in under a second.
+
 ---
 
 ## Common first-run errors
