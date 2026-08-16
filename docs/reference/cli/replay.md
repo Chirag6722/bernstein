@@ -157,7 +157,6 @@ Same as `export`, but produces a redacted receipt suitable for publishing. Sensi
 > example lands here with that fix. Use `export` for a local receipt in the
 > meantime -- `publish` differs only in redacting before it writes.
 
-
 ### `bernstein replay verify <RECEIPT>`
 
 Offline verifier for an exported or published receipt. Recomputes the receipt's chain and reports byte-identity or the first divergent step. Exits non-zero on mismatch.
