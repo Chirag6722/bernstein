@@ -174,10 +174,48 @@ class TestTheDocumentedRegenerationCommandMatchesTheOneWePrint:
 
     REPO_ROOT = Path(__file__).resolve().parents[2]
 
-    def in_file_header(self) -> str:
-        text = (self.REPO_ROOT / "docs" / "requirements.in").read_text(encoding="utf-8")
-        # The header is the leading comment block, before the first requirement.
-        return "\n".join(line for line in text.splitlines() if line.startswith("#"))
+    # The sentence the command block follows. Anchoring on it is what keeps
+    # this scoped to the command instead of the whole comment block.
+    COMMAND_MARKER = "Regenerate after any change here with:"
+
+    def documented_command(self) -> str:
+        """The regeneration command from the ``.in`` header, and nothing else.
+
+        Scoped deliberately. An earlier version of this test matched against
+        every comment line in the file, which made it unfailable: the prose
+        two lines below the command explains why ``--strip-extras`` matters
+        and therefore *contains the string the assertion looked for*. Delete
+        the flag from the command and the test stayed green, because the
+        sentence warning you not to delete it kept the substring alive.
+
+        That is this PR's own subject one level up - a check reporting green
+        without checking - so it is worth stating rather than quietly fixing.
+        """
+        lines = (self.REPO_ROOT / "docs" / "requirements.in").read_text(encoding="utf-8").splitlines()
+        start = next(
+            (index for index, line in enumerate(lines) if self.COMMAND_MARKER in line),
+            None,
+        )
+        assert start is not None, (
+            f"docs/requirements.in no longer contains {self.COMMAND_MARKER!r}, so this test "
+            f"cannot find the command it is meant to check. Re-anchor it rather than deleting it."
+        )
+        collected: list[str] = []
+        for line in lines[start + 1 :]:
+            if not line.startswith("#"):
+                break
+            body = line[1:]
+            if body.strip() == "":
+                # A blank comment line closes the block once it has started.
+                if collected:
+                    break
+                continue
+            if not body.startswith("   "):
+                # Back to unindented prose: the command is over.
+                break
+            collected.append(body.strip().rstrip("\\").strip())
+        assert collected, "found the marker but no indented command block under it"
+        return " ".join(collected)
 
     @pytest.mark.parametrize(
         "flag",
@@ -186,14 +224,31 @@ class TestTheDocumentedRegenerationCommandMatchesTheOneWePrint:
     )
     def test_every_flag_the_gate_prints_is_in_the_documented_command(self, flag: str) -> None:
         assert flag in REGEN_COMMAND, f"{flag} vanished from the printed command"
-        assert flag in self.in_file_header(), (
-            f"docs/requirements.in's header no longer documents {flag}, so following it "
+        assert flag in self.documented_command(), (
+            f"docs/requirements.in's command block no longer documents {flag}, so following it "
             f"produces a file this gate will misdiagnose. Keep it in step with REGEN_COMMAND."
         )
 
+    def test_the_extraction_excludes_the_prose_around_the_command(self) -> None:
+        """The control. Without this, the scoping could silently stop working.
+
+        If ``documented_command`` ever went back to returning the whole
+        comment block, every assertion above would pass for the wrong reason
+        again and nothing would say so.
+        """
+        command = self.documented_command()
+        raw = (self.REPO_ROOT / "docs" / "requirements.in").read_text(encoding="utf-8")
+        # The explanatory sentence mentions the flag and must NOT be what the
+        # assertions are matching against.
+        assert "not optional" in raw, "the explanatory prose is gone; re-point this control at whatever replaced it"
+        assert "not optional" not in command
+        # And the command really is a command, not an empty string that would
+        # make every `in` assertion above fail loudly rather than pass quietly.
+        assert command.startswith("uv run")
+
     def test_the_compiled_file_records_the_same_invocation_it_documents(self) -> None:
         # The .txt header is pip-compile's own record of how it was called.
-        # If it and the .in header disagree, one of them is lying about how
+        # If it and the .in command disagree, one of them is lying about how
         # to reproduce the file - which is exactly what this gate found.
         txt_header = "\n".join(
             line
@@ -201,4 +256,4 @@ class TestTheDocumentedRegenerationCommandMatchesTheOneWePrint:
             if line.startswith("#")
         )
         assert "--strip-extras" in txt_header
-        assert "--strip-extras" in self.in_file_header()
+        assert "--strip-extras" in self.documented_command()
