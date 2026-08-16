@@ -44,9 +44,12 @@ scheduled job asking "are our pins old" than by a per-PR gate asking
 "is this diff correct".
 
 Note for whoever later adds the recompile half: the regeneration command
-in ``docs/requirements.in`` omits ``--strip-extras``, which the header of
-``docs/requirements.txt`` records as having been used. A recompile-and-diff
-gate built on the documented command fails against a correct tree.
+documented in ``docs/requirements.in`` used to omit ``--strip-extras``,
+which the header of ``docs/requirements.txt`` records as having been used,
+so a recompile-and-diff gate built on the documented command would have
+failed against a correct tree. That header is corrected here and is held
+to ``REGEN_COMMAND`` below by a test, so the documented command is now
+safe to build on - but check that test still exists before trusting it.
 
 Usage:
     python scripts/check_docs_requirements_pins.py

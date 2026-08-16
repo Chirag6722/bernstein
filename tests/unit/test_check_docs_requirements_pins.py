@@ -1,9 +1,14 @@
 """Tests for the docs requirements pin gate (#3995).
 
-Every case builds its own ``.in``/``.txt`` pair in a tmp dir. None of them
-read the real ``docs/`` files: the drift that motivated this gate is fixed
-by #3979, so a test asserting against the real tree would pass from that
-moment on and never fail again regardless of whether the check still works.
+Every case that exercises the *check* builds its own ``.in``/``.txt`` pair
+in a tmp dir. None of those read the real ``docs/`` files: the drift that
+motivated this gate is fixed by #3979, so a test asserting against the real
+tree would pass from that moment on and never fail again regardless of
+whether the check still works.
+
+The one exception is ``TestTheDocumentedRegenerationCommandMatchesTheOneWePrint``,
+which reads the real files on purpose. Its claim is about those two files
+specifically and cannot go stale the way a pin can - see that class.
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from scripts.check_docs_requirements_pins import (
+    REGEN_COMMAND,
     check,
     find_violations,
     parse_in_file,
@@ -144,3 +150,55 @@ class TestMarkers:
         requirements = parse_in_file('tomli>=2,<3; python_version < "3.11"\n')
         violations = find_violations(requirements, {"tomli": "3.1.0"})
         assert [v.name for v in violations] == ["tomli"]
+
+
+class TestTheDocumentedRegenerationCommandMatchesTheOneWePrint:
+    """The one place reading the real files is right.
+
+    Everything above uses tmp dirs because pins change. These two claims do
+    not: the command in the ``.in`` header and the command this gate prints
+    on failure must be the same command, forever. They were NOT the same
+    before this gate existed - the header omitted ``--strip-extras`` while
+    the committed ``.txt`` recorded having used it, which is the second
+    drift #3995 turned up.
+
+    That mattered concretely. Following the header regenerates a ``.txt``
+    with extras left in, and this gate then reports ``mkdocs-material ...
+    no pin was found`` - sending the reader after a dropped dependency that
+    was never dropped.
+
+    Pinning it here rather than trusting review, for the reason the whole
+    PR is about: a documented instruction with nothing checking it drifts
+    from the real one and stays drifted.
+    """
+
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+
+    def in_file_header(self) -> str:
+        text = (self.REPO_ROOT / "docs" / "requirements.in").read_text(encoding="utf-8")
+        # The header is the leading comment block, before the first requirement.
+        return "\n".join(line for line in text.splitlines() if line.startswith("#"))
+
+    @pytest.mark.parametrize(
+        "flag",
+        ["--generate-hashes", "--strip-extras", "--output-file", "pip-compile"],
+        ids=["hashes", "strip-extras", "output-file", "compiler"],
+    )
+    def test_every_flag_the_gate_prints_is_in_the_documented_command(self, flag: str) -> None:
+        assert flag in REGEN_COMMAND, f"{flag} vanished from the printed command"
+        assert flag in self.in_file_header(), (
+            f"docs/requirements.in's header no longer documents {flag}, so following it "
+            f"produces a file this gate will misdiagnose. Keep it in step with REGEN_COMMAND."
+        )
+
+    def test_the_compiled_file_records_the_same_invocation_it_documents(self) -> None:
+        # The .txt header is pip-compile's own record of how it was called.
+        # If it and the .in header disagree, one of them is lying about how
+        # to reproduce the file - which is exactly what this gate found.
+        txt_header = "\n".join(
+            line
+            for line in (self.REPO_ROOT / "docs" / "requirements.txt").read_text(encoding="utf-8").splitlines()[:12]
+            if line.startswith("#")
+        )
+        assert "--strip-extras" in txt_header
+        assert "--strip-extras" in self.in_file_header()
