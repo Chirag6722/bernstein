@@ -161,6 +161,17 @@ jobs:
           fi
           echo "regressions=$rc" >> "$GITHUB_OUTPUT"
 
+      - name: Verify last-green projects the receipts
+        # The run writes last_green.json and the docs table from one pass, so
+        # checking those two against each other proves only that they share a
+        # generator. This re-reads the receipts off disk in a fresh process and
+        # re-derives the projection, which is the step that was never checked
+        # (#3940). Runs before the upload so a bad projection is caught while
+        # the receipts are still local.
+        run: |
+          set -euo pipefail
+          uv run python scripts/adapter_canary.py --verify-projection             --out-dir .sdd/runtime/adapter-canary
+
       - name: Save canary state
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
