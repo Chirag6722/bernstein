@@ -1,0 +1,131 @@
+name: docs-requirements-staleness-weekly
+
+# Weekly staleness report for the docs toolchain's transitive pins.
+#
+# #3999 gates docs/requirements.txt against the constraints its .in file
+# declares. That check is offline and covers only the 4 direct requirements;
+# the other 39 entries are transitive and nothing re-resolves them. A pin can
+# sit at a yanked release, or one a direct dependency's metadata no longer
+# permits, while every existing gate stays green (#4001).
+#
+# Answering that needs a live index, which is why this is weekly and not part
+# of the per-PR hygiene job: a blocking gate that reddens on an index hiccup
+# stops being a blocking gate, and a non-blocking one is another green tick
+# that proves nothing.
+#
+# It reports; it does not open a PR carrying the resolution. Taking a moved
+# transitive pin is a judgement call that depends on things the job cannot
+# see, and a weekly PR touching 39 pins is read by nobody. That is the line
+# against #4053, where the regeneration is mechanical and IS fully automated.
+
+on:
+  schedule:
+    # 06:53 UTC every Monday. Offset into the gap between trufflehog (06:23)
+    # and the coverage-ratchet / required-check-canary pair (both 07:23).
+    - cron: "53 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-requirements-staleness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  staleness:
+    name: recompile and diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner (audit mode)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: ./.github/actions/bootstrap
+
+      - name: Recompile and diff the docs pins
+        id: staleness
+        run: |
+          set -euo pipefail
+          set +e
+          uv run python scripts/check_docs_requirements_staleness.py | tee staleness.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          # rc=1 means pins moved, which is the finding this job exists to
+          # report, not a broken job. rc=2 means the recompile itself could
+          # not run, and that IS a red run: a staleness check that cannot
+          # reach the index has not reported "no drift", it has reported
+          # nothing, and those must not look the same.
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::staleness check exited $rc (recompile failed)"
+            exit "$rc"
+          fi
+          echo "stale=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh the tracking issue
+        if: steps.staleness.outputs.stale == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TITLE="docs/requirements.txt transitive pins are behind a fresh resolve"
+          BODY="$(cat <<EOF
+          $(cat staleness.txt)
+
+          Taking these is a judgement call rather than a mechanical update, so this
+          job reports instead of opening a pull request carrying the resolution.
+
+          Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Refs #4001.
+          EOF
+          )"
+          # One tracking issue, refreshed. A fresh issue every Monday against
+          # a set of pins nobody has decided on yet turns the report into its
+          # own noise source, which is the shape this series keeps removing.
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --search "in:title docs/requirements.txt transitive pins" \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')
+          if [ -n "$EXISTING" ]; then
+            echo "Refreshing existing tracking issue #$EXISTING"
+            gh issue edit "$EXISTING" \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" --body "$BODY"
+          else
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label dependencies \
+              --label ci
+          fi
+
+      - name: Close the tracking issue when the pins catch up
+        if: steps.staleness.outputs.stale == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --search "in:title docs/requirements.txt transitive pins" \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" \
+              --repo "${{ github.repository }}" \
+              --comment "A fresh resolve now matches every committed pin. Closed by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+          fi
