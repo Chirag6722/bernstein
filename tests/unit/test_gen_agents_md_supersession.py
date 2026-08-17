@@ -64,6 +64,16 @@ class TestItStepsAsideRatherThanMisleading:
         assert "bernstein agents-md sync" in out
         assert "--force" in out
 
+    def test_the_bare_stdout_form_steps_aside_too(self) -> None:
+        # The guard sits ahead of the flag dispatch, so the no-argument form is
+        # covered as well. Pinned because the module docstring documents all
+        # three spellings: a doc that named only two would be the same defect
+        # this change fixes, one layer in.
+        proc = run_script()
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "managed by `bernstein agents-md sync`" in proc.stdout
+        assert "## Module map" not in proc.stdout, "the smaller legacy map must not reach stdout unforced"
+
     def test_update_without_force_writes_nothing(self) -> None:
         # The destructive half. --check being safe would be no comfort if the
         # command the old message printed still removed the rows.

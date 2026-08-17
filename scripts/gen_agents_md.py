@@ -4,7 +4,7 @@ Usage:
     uv run python scripts/gen_agents_md.py --check   # exit 1 if stale
     uv run python scripts/gen_agents_md.py --update  # rewrite module map in place
     uv run python scripts/gen_agents_md.py           # print generated section to stdout
-    ... add --force to either to override the supersession check below
+    ... add --force to any of them to override the supersession check below
 
 The script scans src/bernstein/ with ast to extract one-line module
 docstrings, groups them by package, then replaces the section of AGENTS.md
@@ -15,7 +15,10 @@ conventions, test patterns, gotchas, etc.) is preserved verbatim.
 Note: this is the *legacy detailed* module-map generator. When
 ``bernstein agents-md sync`` is the active source of truth (its verify runs
 in CI), that command owns AGENTS.md end to end and this script steps aside:
-``--check`` and ``--update`` print a note and exit 0 rather than acting.
+every invocation - ``--check``, ``--update``, and the bare stdout form -
+prints a note and exits 0 rather than acting. The guard is on the script, not
+on a subset of its flags, so there is no spelling of the command that reaches
+a stale verdict or the smaller map by accident.
 
 That guard used to be advice, written down in two playbooks and nowhere the
 reader would meet it. This script called the committed file stale and printed
