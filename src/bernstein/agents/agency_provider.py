@@ -8,10 +8,14 @@ followed by the system-prompt body.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
+import json
 import logging
 import re
 import subprocess
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +24,24 @@ import yaml
 from bernstein.agents.catalog import CatalogAgent
 
 logger = logging.getLogger(__name__)
+
+
+class AgentCatalogTamperedError(Exception):
+    """Raised when an agent catalog's content digest fails lockfile verification."""
+
+
+def compute_catalog_digest(target: Path) -> str:
+    """Compute a deterministic SHA-256 digest over all markdown files in *target*."""
+    hasher = hashlib.sha256()
+    if not target.exists():
+        return hasher.hexdigest()
+    for file_path in sorted(target.glob("**/*.md")):
+        rel_path = file_path.relative_to(target).as_posix()
+        hasher.update(rel_path.encode("utf-8"))
+        with contextlib.suppress(OSError):
+            hasher.update(file_path.read_bytes())
+    return hasher.hexdigest()
+
 
 # Maps Agency division names (or their base component) to Bernstein role names.
 _DIVISION_ROLE_MAP: dict[str, str] = {
@@ -378,6 +400,21 @@ class AgencyProvider:
         if not self.is_available():
             return []
 
+        # Verify lockfile provenance if present
+        lock_file = self._local_path / "agents.lock"
+        if lock_file.is_file():
+            try:
+                data = json.loads(lock_file.read_text(encoding="utf-8"))
+                expected_digest = data.get("content_digest", "")
+                actual_digest = compute_catalog_digest(self._local_path)
+                if expected_digest and actual_digest != expected_digest:
+                    raise AgentCatalogTamperedError(
+                        f"Agent catalog at {self._local_path} content digest mismatch "
+                        f"(expected {expected_digest[:8]}, got {actual_digest[:8]})"
+                    )
+            except json.JSONDecodeError:
+                pass
+
         agents: list[CatalogAgent] = []
         for division_dir in sorted(self._local_path.iterdir()):
             if not division_dir.is_dir():
@@ -474,6 +511,17 @@ class AgencyProvider:
             if result.returncode != 0:
                 return False, f"git clone failed: {result.stderr.strip()}"
             action = "cloned"
+
+        digest = compute_catalog_digest(target)
+        target.mkdir(parents=True, exist_ok=True)
+        lock_file = target / "agents.lock"
+        lock_payload = {
+            "url": url,
+            "content_digest": digest,
+            "synced_at": datetime.now(UTC).isoformat(),
+            "signature_present": False,
+        }
+        lock_file.write_text(json.dumps(lock_payload, indent=2), encoding="utf-8")
 
         marker.touch()
         return True, f"Agency catalog {action} from {url}"
