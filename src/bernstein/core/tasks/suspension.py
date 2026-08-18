@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.persistence.work_ledger import LedgerEntry, WorkLedger
     from bernstein.core.security.audit_chain import AuditChainStore, AuditEvent
+    from bernstein.core.security.permissions import AgentPermissions
 
 logger = logging.getLogger(__name__)
 
@@ -889,6 +890,9 @@ def park_task(
     handles: ResourceHandles | None = None,
     ledger: WorkLedger | None = None,
     wake_condition: str = "",
+    role: str = "",
+    permissions: AgentPermissions | None = None,
+    parent_run_id: str = "",
 ) -> ParkResult:
     """Durably park ``task_id``: row, receipt, releases, then ledger.
 
@@ -917,6 +921,9 @@ def park_task(
         handles: Physical release effects; ``None`` releases only budget.
         ledger: Optional work ledger to persist the SUSPENDED transition.
         wake_condition: ``""`` or :data:`WAKE_APPROVAL`.
+        role: Agent role name at suspend time.
+        permissions: Live :class:`AgentPermissions` at suspend time.
+        parent_run_id: Run that owns the task.
 
     Returns:
         A :class:`ParkResult` with the row, receipt hash, release outcome, and
@@ -928,6 +935,7 @@ def park_task(
             path would later refuse.
     """
     from bernstein.core.cost.budget_actions import compute_released_headroom
+    from bernstein.core.persistence.agent_checkpoint import AgentCheckpoint, compute_grant_hash, save_checkpoint
     from bernstein.core.persistence.work_ledger import KIND_TASK_SUSPENDED
     from bernstein.core.security.audit_chain import record_task_suspension
 
@@ -948,6 +956,26 @@ def park_task(
         released_usd=released_usd,
         wake_condition=wake_condition,
     )
+
+    grant_hash = ""
+    if role and permissions is not None:
+        grant_hash = compute_grant_hash(
+            role=role,
+            permissions=permissions,
+            task_id=task_id,
+            parent_run_id=parent_run_id,
+            chain_head=suspend_row.event_hash,
+        )
+    checkpoint = AgentCheckpoint(
+        agent_id=adapter,
+        task_id=task_id,
+        worktree_path=str(worktree_path),
+        role=role,
+        grant_hash=grant_hash,
+        parent_run_id=parent_run_id,
+        chain_head_at_suspend=suspend_row.event_hash,
+    )
+    save_checkpoint(checkpoint, sdd_dir / "runtime")
 
     # Receipt before effect: the suspend receipt exists on the chain before a
     # single resource is freed.
