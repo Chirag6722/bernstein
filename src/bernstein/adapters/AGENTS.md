@@ -38,3 +38,5 @@ Per-adapter unit tests are mostly flat as
 are current, so follow the one an adapter already uses, and run one
 file at a time. Contract checks live under `tests/contract/`; live-
 binary conformance is opt-in via the `--live` pytest flag.
+
+<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->

@@ -12,6 +12,7 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 | `agent_card_keystore.py` | Ed25519 install-identity keystore |
 | `intent_capsule.py` | Signed task-goal capsules with drift escalation |
 | `sigstore_attestation.py` | Rekor attestation with a local Ed25519 fallback; verifies local bundles |
+| `result_receipt_bundle.py` | Result receipt bundle with offline DSSE verification |
 
 ## Invariants
 
@@ -38,3 +39,5 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 ## Testing
 
 Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.
+
+<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->

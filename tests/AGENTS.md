@@ -38,3 +38,5 @@ uv run pytest tests/unit/test_foo.py -x -q    # single file (fast)
   that depends on sibling-file ordering is already broken.
 - Live adapter conformance tests are opt-in via the `--live` flag
   registered in `conftest.py`.
+
+<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->

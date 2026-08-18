@@ -14,6 +14,7 @@ repeat. Coordination is plain Python, never an LLM (ADR-006).
 | `escalation.py` | Journal-anchored, Ed25519-signed stall escalation receipts |
 | `trigger_manager.py` | Evaluates `triggers.yaml` rules into `TriggerEvent`s (event and cron sources) |
 | `worker.py` | `bernstein-worker` process wrapper for spawned CLI agents |
+| `run_closure_owner.py` | Universal authenticated run closure owner |
 
 Heavy lifting lives in siblings: `../tasks/task_lifecycle.py` (claim,
 spawn, retry, completion) and `../agents/` (spawner, heartbeat, crash
@@ -38,3 +39,5 @@ detection, reaping).
 
 Single files only: `uv run pytest tests/unit/test_orchestrator.py -x -q`.
 Never run the full suite (see `tests/AGENTS.md`).
+
+<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->
