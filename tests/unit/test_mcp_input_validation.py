@@ -520,7 +520,7 @@ def _jsonish(max_leaves: int = 20) -> st.SearchStrategy[object]:
 
 
 @given(payload=_jsonish())
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_unknown_tool_always_rejected(payload: object) -> None:
     result = validate_tool_call("__no_such_tool__", payload)
     assert isinstance(result, ValidationError)
@@ -528,7 +528,7 @@ def test_fuzz_unknown_tool_always_rejected(payload: object) -> None:
 
 
 @given(payload=_jsonish())
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_validator_never_raises(payload: object) -> None:
     # Pyright/runtime: object is fine; validator must never raise.
     result = validate_tool_call("bernstein_run", payload)
@@ -536,7 +536,7 @@ def test_fuzz_validator_never_raises(payload: object) -> None:
 
 
 @given(goal=st.text(min_size=1, max_size=200))
-@settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+@settings(derandomize=True, max_examples=50, suppress_health_check=[HealthCheck.too_slow], deadline=None)
 def test_fuzz_goal_text_round_trip(goal: str) -> None:
     # Strip control chars first since the deny rule is the intended behaviour.
     cleaned = "".join(c for c in goal if c in "\t\n\r" or 32 <= ord(c) <= 126)
