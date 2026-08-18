@@ -21,6 +21,23 @@ from bernstein.agents.catalog import CatalogAgent
 
 logger = logging.getLogger(__name__)
 
+
+def compute_catalog_digest(target: Path) -> str:
+    """Compute a deterministic SHA-256 digest over all markdown files in *target*."""
+    import contextlib
+    import hashlib
+
+    hasher = hashlib.sha256()
+    if not target.exists():
+        return hasher.hexdigest()
+    for file_path in sorted(target.glob("**/*.md")):
+        rel_path = file_path.relative_to(target).as_posix()
+        hasher.update(rel_path.encode("utf-8"))
+        with contextlib.suppress(OSError):
+            hasher.update(file_path.read_bytes())
+    return hasher.hexdigest()
+
+
 # Maps Agency division names (or their base component) to Bernstein role names.
 _DIVISION_ROLE_MAP: dict[str, str] = {
     "engineering": "backend",
