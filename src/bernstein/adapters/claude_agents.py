@@ -12,7 +12,10 @@ parallelism, without Bernstein needing to manage those subprocesses.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bernstein.agents.catalog import CatalogAgent
 
 # ---------------------------------------------------------------------------
 # Subagent definitions per role
@@ -104,22 +107,43 @@ _SUBAGENTS: dict[str, dict[str, dict[str, Any]]] = {
 }
 
 
-def build_agents_json(role: str) -> dict[str, Any] | None:
+def build_agents_json(
+    role: str,
+    catalog_agents: list[CatalogAgent] | None = None,
+) -> dict[str, Any] | None:
     """Build --agents JSON for the given role.
 
     Generates subagent definitions that Claude Code's Agent tool uses when
-    the spawned agent delegates subtasks. This lets Bernstein control the
-    behaviour of Claude Code's internal subagents per role.
+    the spawned agent delegates subtasks. Merges catalog-matched agents
+    with the static per-role subagent table.
 
     Args:
         role: Agent role (e.g. "backend", "qa", "security", "docs").
+        catalog_agents: Optional list of loaded :class:`CatalogAgent` instances.
 
     Returns:
         Dict suitable for ``json.dumps()`` and passing to ``--agents``,
         or ``None`` if the role has no custom subagent definitions.
     """
-    agents = _SUBAGENTS.get(role)
-    if not agents:
+    base_agents = _SUBAGENTS.get(role, {})
+    result: dict[str, dict[str, Any]] = {name: {**defn} for name, defn in base_agents.items()}
+
+    if catalog_agents:
+        for agent in catalog_agents:
+            if agent.role == role or role in getattr(agent, "tags", []) or role == "all":
+                tools = getattr(agent, "tools", None)
+                if not tools:
+                    tools = ["Read", "Grep", "Glob", "Bash"]
+                sub_def: dict[str, Any] = {
+                    "description": agent.description or f"Subagent for {agent.name}",
+                    "prompt": getattr(agent, "system_prompt", getattr(agent, "prompt_body", "")),
+                    "tools": list(tools),
+                }
+                model = getattr(agent, "model", None)
+                if model:
+                    sub_def["model"] = model
+                result[agent.name] = sub_def
+
+    if not result:
         return None
-    # Return a shallow copy so callers can't mutate the module-level data.
-    return {name: {**defn} for name, defn in agents.items()}
+    return result

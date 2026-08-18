@@ -289,6 +289,21 @@ def inject_skills(
             templates_to_inject.append(candidate.template_name)
             trigger_by_template[candidate.template_name] = "auto-route"
 
+    # Catalog-installed skill packs (.bernstein/skills/<name>/)
+    catalog_skills_dir = workdir / ".bernstein" / "skills"
+    if catalog_skills_dir.is_dir():
+        for item in catalog_skills_dir.iterdir():
+            if item.is_file() and item.name.endswith(".md"):
+                if item.name not in trigger_by_template:
+                    templates_to_inject.append(item.name)
+                    trigger_by_template[item.name] = "catalog"
+            elif item.is_dir():
+                template_name = f"{item.name}.md"
+                has_skill = (item / "SKILL.md").is_file() or (item / template_name).is_file()
+                if has_skill and template_name not in trigger_by_template:
+                    templates_to_inject.append(template_name)
+                    trigger_by_template[template_name] = "catalog"
+
     # Kill switch: refuse to inject any skill a signed revocation covers, and
     # record a chain-anchored refusal receipt for every revoked install
     # (issue #2527). Best-effort: a bad catalog cache must never wedge a spawn.
@@ -312,7 +327,20 @@ def inject_skills(
             )
             continue
 
+        # Bundled role templates in templates/skills/ take precedence over catalog-installed skills
         source_path = skills_source_dir / template_name
+        if not source_path.exists() and catalog_skills_dir.is_dir():
+            skill_stem = template_name.rsplit(".", 1)[0]
+            cat_direct = catalog_skills_dir / template_name
+            cat_dir_skill = catalog_skills_dir / skill_stem / "SKILL.md"
+            cat_dir_template = catalog_skills_dir / skill_stem / template_name
+            if cat_direct.exists():
+                source_path = cat_direct
+            elif cat_dir_skill.exists():
+                source_path = cat_dir_skill
+            elif cat_dir_template.exists():
+                source_path = cat_dir_template
+
         if not source_path.exists():
             _logger.debug("Skill template not found: %s - skipping", source_path)
             audit_records.append(
