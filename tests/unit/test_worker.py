@@ -266,6 +266,26 @@ class TestAvoidShimLineOverflow:
         assert prompt in result
         assert prompt_path is None
 
+    def test_avoid_shim_line_overflow_refuses_escaping_session(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Issue #4106: _avoid_shim_line_overflow routes prompt_path through contained_subpath and refuses escaping session."""
+        from bernstein.core.security.path_containment import PathContainmentError
+
+        monkeypatch.setattr("bernstein.core.orchestration.worker.os.name", "nt")
+        monkeypatch.setattr("sys.platform", "win32")
+        monkeypatch.setattr(
+            "bernstein.core.orchestration.worker.shutil.which",
+            lambda name: r"C:\Users\test\.claude\claude.cmd",
+        )
+
+        prompt = "a" * 8200
+        cmd = ["claude", "--model", "sonnet", "-p", prompt]
+        launch_cmd = _resolve_launch_cmd(cmd)
+
+        with pytest.raises(PathContainmentError):
+            _avoid_shim_line_overflow(cmd, launch_cmd, workdir=tmp_path, session="../escaping_session")
+
 
 # ---------------------------------------------------------------------------
 # Worker process (integration)
