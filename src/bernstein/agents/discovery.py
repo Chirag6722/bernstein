@@ -324,6 +324,7 @@ class AgentDiscovery:
             proj_dir / ".claude" / "agents",
         ]
 
+        from bernstein.agents.agency_provider import compute_catalog_digest
         from bernstein.agents.catalog import CatalogAgent
         from bernstein.agents.plugin_catalog import parse_agent_file
 
@@ -339,8 +340,6 @@ class AgentDiscovery:
             lock_file = hdir / "agents.lock"
             if lock_file.is_file():
                 try:
-                    from bernstein.agents.agency_provider import compute_catalog_digest
-
                     data = json.loads(lock_file.read_text(encoding="utf-8"))
                     expected_digest = data.get("content_digest", "") if isinstance(data, dict) else ""
                     if not expected_digest:
@@ -349,7 +348,10 @@ class AgentDiscovery:
                         actual_digest = compute_catalog_digest(hdir)
                         if actual_digest != expected_digest:
                             is_refused = True
-                except (json.JSONDecodeError, OSError):
+                except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+                    # A lockfile that is present but unusable - malformed JSON, undecodable
+                    # bytes, or an unreadable file under it - refuses the directory rather
+                    # than escaping to the caller and aborting the whole discovery sweep.
                     is_refused = True
 
             if is_refused:
