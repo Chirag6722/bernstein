@@ -138,6 +138,7 @@ class AgentDiscovery:
     metrics: dict[str, AgentMetrics] = field(default_factory=dict[str, AgentMetrics])
     total_agents: int = 0
     last_full_sync: str | None = None
+    project_dir: Path | None = None
 
     # ------------------------------------------------------------------ #
     # Factory / persistence                                                #
@@ -316,10 +317,11 @@ class AgentDiscovery:
         if not enabled:
             return []
 
+        proj_dir = self.project_dir or Path.cwd()
         harness_dirs = [
             Path.home() / ".claude" / "agents",
             Path.home() / ".claude" / "plugins",
-            Path(".claude/agents"),
+            proj_dir / ".claude" / "agents",
         ]
 
         from bernstein.agents.catalog import CatalogAgent
@@ -340,12 +342,29 @@ class AgentDiscovery:
                     from bernstein.agents.agency_provider import compute_catalog_digest
 
                     data = json.loads(lock_file.read_text(encoding="utf-8"))
-                    expected_digest = data.get("content_digest", "")
-                    actual_digest = compute_catalog_digest(hdir)
-                    if expected_digest and actual_digest != expected_digest:
+                    expected_digest = data.get("content_digest", "") if isinstance(data, dict) else ""
+                    if not expected_digest:
                         is_refused = True
+                    else:
+                        actual_digest = compute_catalog_digest(hdir)
+                        if actual_digest != expected_digest:
+                            is_refused = True
                 except (json.JSONDecodeError, OSError):
-                    pass
+                    is_refused = True
+
+            if is_refused:
+                logger.warning("Refusing harness-local directory %s: digest mismatch or corrupt lockfile", hdir)
+                entry = DirectoryEntry(
+                    name=f"harness:{hdir.name}",
+                    source_type="local",
+                    path=str(hdir),
+                    agents=0,
+                    last_sync=_now_iso(),
+                    enabled=False,
+                )
+                self.directories.append(entry)
+                added.append(entry)
+                continue
 
             for md_file in hdir.glob("**/*.md"):
                 if md_file.name == "SKILL.md":
@@ -360,7 +379,7 @@ class AgentDiscovery:
                 path=str(hdir),
                 agents=agent_count,
                 last_sync=_now_iso(),
-                enabled=not is_refused,
+                enabled=True,
             )
             self.directories.append(entry)
             added.append(entry)

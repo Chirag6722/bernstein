@@ -10,9 +10,10 @@ from bernstein.agents.discovery import AgentDiscovery
 
 
 def test_discovery_off_by_default_touches_nothing_outside_repo(tmp_path: Path) -> None:
-    """Issue #3975: Harness-local discovery is OFF by default and returns [] when enabled=False."""
+    """Issue #3975: Harness-local discovery is OFF by default and returns [] when enabled=False without touching Path.home."""
     discovery = AgentDiscovery(registry_path=tmp_path / "registry.json")
-    entries = discovery.discover_harness_local(enabled=False)
+    with patch("pathlib.Path.home", side_effect=RuntimeError("Path.home called when disabled")):
+        entries = discovery.discover_harness_local(enabled=False)
     assert entries == []
 
 
@@ -25,7 +26,7 @@ def test_discovery_on_lists_harness_resources(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    discovery = AgentDiscovery(registry_path=tmp_path / "registry.json")
+    discovery = AgentDiscovery(registry_path=tmp_path / "registry.json", project_dir=tmp_path)
 
     with patch("pathlib.Path.home", return_value=tmp_path):
         entries = discovery.discover_harness_local(enabled=True)
@@ -38,7 +39,7 @@ def test_discovery_on_lists_harness_resources(tmp_path: Path) -> None:
 
 
 def test_verification_failure_is_listed_as_refused(tmp_path: Path) -> None:
-    """Issue #3975: A discovered resource failing lockfile verification is marked as refused (enabled=False)."""
+    """Issue #3975: A discovered resource failing lockfile verification is marked as refused (enabled=False, agents=0)."""
     claude_agents = tmp_path / ".claude" / "agents"
     claude_agents.mkdir(parents=True)
     (claude_agents / "reviewer.md").write_text(
@@ -50,7 +51,7 @@ def test_verification_failure_is_listed_as_refused(tmp_path: Path) -> None:
     lock_file = claude_agents / "agents.lock"
     lock_file.write_text(json.dumps({"content_digest": "invalid_digest_0000"}), encoding="utf-8")
 
-    discovery = AgentDiscovery(registry_path=tmp_path / "registry.json")
+    discovery = AgentDiscovery(registry_path=tmp_path / "registry.json", project_dir=tmp_path)
 
     with patch("pathlib.Path.home", return_value=tmp_path):
         entries = discovery.discover_harness_local(enabled=True)
@@ -58,3 +59,4 @@ def test_verification_failure_is_listed_as_refused(tmp_path: Path) -> None:
     harness_entry = next((e for e in entries if "harness:agents" in e.name), None)
     assert harness_entry is not None
     assert harness_entry.enabled is False  # Refused due to digest mismatch
+    assert harness_entry.agents == 0  # Directory walk was skipped on refusal
