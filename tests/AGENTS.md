@@ -15,17 +15,15 @@ uv run pytest tests/unit/test_foo.py -x -q    # single file (fast)
 
 ## Invariants
 
-- NEVER run bare `pytest` over the whole suite: pytest retains test
-  objects for the session, and 2000+ files leak into 100+ GB of RAM.
-  The isolated per-file runner caps memory at one file's worth
-  (`scripts/run_tests.py` docstring; warning in `CONTRIBUTING.md`).
+- NEVER run bare `pytest` over the whole suite: retained test objects mean
+  2000+ files leak into 100+ GB of RAM. The isolated per-file runner caps
+  memory per file (`scripts/run_tests.py` docstring; `CONTRIBUTING.md`).
 - Markers are strict (`--strict-markers` in `pyproject.toml`);
   register a new marker there before using it.
 - Async tests carry an explicit `@pytest.mark.asyncio` (asyncio mode
   is strict).
 - Runtime type-checking via beartype is opt-in per environment
-  (`BEARTYPE_USE_CLAW=enable`; CI's beartype job sets it, local runs
-  default off).
+  (`BEARTYPE_USE_CLAW=enable`; CI's beartype job sets it, local defaults off).
 - Docs-guard tests (`unit/test_naming_policy_docs.py`,
   `unit/test_nested_agents_context.py`) pin repo-level invariants;
   extend them when adding gated docs.

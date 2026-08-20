@@ -27,14 +27,11 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
   `../orchestration/orchestrator.py`); features degrade without it.
 - Untrusted paths are opened, never compared: a path-comparison check validates
   one lookup while the open performs another (`sigstore_attestation.py`).
-- Same rule on the tenant write side: a derived path says where the layout
-  points, not where a write lands. The whole subtree (`backlog`, `metrics`,
-  `runtime`, `runtime/wal`, `audit`) is created and opened through
-  `TenantPaths.anchor` / `tenant_metrics_target` via
-  `../persistence/anchored_write.py`, rotation included (`rotate_anchored` -
-  it renames and unlinks). Needs `dir_fd` + `O_NOFOLLOW`; lacking either, the
-  refusal narrows to the final component or vanishes, never weakens
-  (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+- Same rule for tenant writes: the whole subtree (`backlog`, `metrics`,
+  `runtime`, `audit`, ...) is created and opened through `TenantPaths.anchor`
+  (`../persistence/anchored_write.py`), rotation included. Needs `dir_fd` +
+  `O_NOFOLLOW`; lacking either, the refusal narrows to the final component or
+  vanishes, never weakens (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
 
 ## Testing
 
