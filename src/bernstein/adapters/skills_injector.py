@@ -334,12 +334,25 @@ def inject_skills(
             cat_direct = catalog_skills_dir / template_name
             cat_dir_skill = catalog_skills_dir / skill_stem / "SKILL.md"
             cat_dir_template = catalog_skills_dir / skill_stem / template_name
+            candidate = None
             if cat_direct.exists():
-                source_path = cat_direct
+                candidate = cat_direct
             elif cat_dir_skill.exists():
-                source_path = cat_dir_skill
+                candidate = cat_dir_skill
             elif cat_dir_template.exists():
-                source_path = cat_dir_template
+                candidate = cat_dir_template
+
+            if candidate is not None:
+                try:
+                    resolved = candidate.resolve()
+                    cat_resolved = catalog_skills_dir.resolve()
+                    workdir_resolved = workdir.resolve()
+                    if resolved.is_relative_to(cat_resolved) or resolved.is_relative_to(workdir_resolved):
+                        source_path = candidate
+                    else:
+                        _logger.warning("Refusing skill template symlink escape %s -> %s", candidate, resolved)
+                except (OSError, ValueError):
+                    _logger.warning("Failed to resolve candidate skill path %s", candidate)
 
         if not source_path.exists():
             _logger.debug("Skill template not found: %s - skipping", source_path)

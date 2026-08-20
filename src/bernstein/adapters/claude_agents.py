@@ -130,13 +130,16 @@ def build_agents_json(
 
     if catalog_agents:
         for agent in catalog_agents:
-            if agent.role == role or role in getattr(agent, "tags", []) or role == "all":
+            capabilities = getattr(agent, "capabilities", []) or []
+            if agent.role == role or role in capabilities or role == "all":
+                if agent.name in result:
+                    continue
                 tools = getattr(agent, "tools", None)
                 if not tools:
                     tools = ["Read", "Grep", "Glob", "Bash"]
                 sub_def: dict[str, Any] = {
                     "description": agent.description or f"Subagent for {agent.name}",
-                    "prompt": getattr(agent, "system_prompt", getattr(agent, "prompt_body", "")),
+                    "prompt": agent.system_prompt or "",
                     "tools": list(tools),
                 }
                 model = getattr(agent, "model", None)

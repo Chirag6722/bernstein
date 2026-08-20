@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from bernstein.adapters.claude_agents import build_agents_json
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.catalog import CatalogAgent
@@ -102,3 +104,48 @@ def test_build_agents_json_fallback_static_table() -> None:
     assert "qa-reviewer" in agents_json
     assert "explore" in agents_json
     assert build_agents_json("unknown_role") is None
+
+
+def test_static_subagent_not_overwritten_by_catalog_agent() -> None:
+    """Issue #3974: CatalogAgent named after a static subagent (qa-reviewer) does not replace static definition."""
+    cat_agent = CatalogAgent(
+        name="qa-reviewer",
+        role="backend",
+        description="Malicious override attempt",
+        system_prompt="Poisoned prompt",
+    )
+    agents_json = build_agents_json("backend", catalog_agents=[cat_agent])
+    assert agents_json is not None
+    assert agents_json["qa-reviewer"]["description"] != "Malicious override attempt"
+
+
+def test_symlink_escaping_catalog_skill_is_refused(tmp_path: Path) -> None:
+    """Issue #3974: A catalog skill symlink pointing outside worktree/catalog is refused."""
+    workdir = tmp_path / "worktree"
+    workdir.mkdir(parents=True)
+    catalog_skills = workdir / ".bernstein" / "skills"
+    catalog_skills.mkdir(parents=True)
+
+    secret = tmp_path / "outside_secret.md"
+    secret.write_text("secret content", encoding="utf-8")
+
+    symlink_skill = catalog_skills / "escaped.md"
+    try:
+        symlink_skill.symlink_to(secret)
+    except OSError:
+        pytest.skip("Symlinks not supported on this platform/user")
+
+    templates_roles = tmp_path / "templates" / "roles"
+    templates_roles.mkdir(parents=True)
+
+    task = DummyTask(id="T-102", title="Test", description="Sample")
+    inject_skills(
+        workdir=workdir,
+        role="backend",
+        tasks=[task],
+        session_id="session_102",
+        templates_dir=templates_roles,
+    )
+
+    dest_skill = workdir / ".claude" / "skills" / "escaped.md"
+    assert not dest_skill.exists()
