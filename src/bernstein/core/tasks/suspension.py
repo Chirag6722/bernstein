@@ -957,25 +957,11 @@ def park_task(
         wake_condition=wake_condition,
     )
 
-    grant_hash = ""
-    if role and permissions is not None:
-        grant_hash = compute_grant_hash(
-            role=role,
-            permissions=permissions,
-            task_id=task_id,
-            parent_run_id=parent_run_id,
-            chain_head=suspend_row.event_hash,
-        )
-    checkpoint = AgentCheckpoint(
-        agent_id=adapter,
-        task_id=task_id,
-        worktree_path=str(worktree_path),
-        role=role,
-        grant_hash=grant_hash,
-        parent_run_id=parent_run_id,
-        chain_head_at_suspend=suspend_row.event_hash,
+    from bernstein.core.security.permissions import get_permissions_for_role
+
+    effective_permissions = (
+        permissions if permissions is not None else (get_permissions_for_role(role) if role else None)
     )
-    save_checkpoint(checkpoint, sdd_dir / "runtime")
 
     # Receipt before effect: the suspend receipt exists on the chain before a
     # single resource is freed.
@@ -992,6 +978,26 @@ def park_task(
         released_usd=released_usd,
         wake_condition=wake_condition,
     )
+
+    grant_hash = ""
+    if role and effective_permissions is not None:
+        grant_hash = compute_grant_hash(
+            role=role,
+            permissions=effective_permissions,
+            task_id=task_id,
+            parent_run_id=parent_run_id,
+            chain_head=suspend_row.event_hash,
+        )
+    checkpoint = AgentCheckpoint(
+        agent_id=task_run_id(task_id),
+        task_id=task_id,
+        worktree_path=str(worktree_path),
+        role=role,
+        grant_hash=grant_hash,
+        parent_run_id=parent_run_id,
+        chain_head_at_suspend=suspend_row.event_hash,
+    )
+    save_checkpoint(checkpoint, sdd_dir / "runtime")
 
     release = release_resources(
         chain=chain,

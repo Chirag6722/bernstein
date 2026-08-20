@@ -987,6 +987,8 @@ def task_suspend(
         worktree = checkpoint.worktree_path if checkpoint and checkpoint.worktree_path else workdir
 
     wake_condition = WAKE_APPROVAL if until == "approval" else ""
+    role = checkpoint.role if checkpoint and getattr(checkpoint, "role", None) else ""
+    parent_run_id = checkpoint.parent_run_id if checkpoint and getattr(checkpoint, "parent_run_id", None) else ""
 
     result = park_task(
         sdd_dir=sdd_dir,
@@ -1000,6 +1002,8 @@ def task_suspend(
         chain=chain,
         ledger=ledger,
         wake_condition=wake_condition,
+        role=role,
+        parent_run_id=parent_run_id,
     )
 
     if wake_condition == WAKE_APPROVAL:

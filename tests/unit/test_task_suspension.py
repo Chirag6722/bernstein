@@ -2164,11 +2164,12 @@ def test_colon_id_escapes_containment_under_windows_semantics() -> None:
 def test_park_task_writes_agent_checkpoint_with_grant_hash(tmp_path: Path) -> None:
     """Issue #4043: park_task must save an AgentCheckpoint with populated grant fields."""
     from bernstein.core.persistence.agent_checkpoint import find_checkpoint_for_task, is_checkpoint_recoverable
-    from bernstein.core.security.permissions import AgentPermissions
+    from bernstein.core.security.permissions import get_permissions_for_role
+    from bernstein.core.tasks.checkpoint_retry import task_run_id
 
     chain = _chain(tmp_path)
     wt = _worktree(tmp_path, "wt_checkpoint", {"main.py": "print('hello')\n"})
-    perms = AgentPermissions(allowed_paths=["src/"], denied_paths=["secrets/"])
+    perms = get_permissions_for_role("backend")
 
     park = park_task(
         sdd_dir=tmp_path / ".sdd",
@@ -2187,14 +2188,13 @@ def test_park_task_writes_agent_checkpoint_with_grant_hash(tmp_path: Path) -> No
 
     checkpoint = find_checkpoint_for_task("task_ckpt_123", tmp_path / ".sdd" / "runtime")
     assert checkpoint is not None
-    assert checkpoint.agent_id == "claude"
+    assert checkpoint.agent_id == task_run_id("task_ckpt_123")
     assert checkpoint.task_id == "task_ckpt_123"
     assert checkpoint.role == "backend"
     assert checkpoint.parent_run_id == "run_789"
     assert checkpoint.chain_head_at_suspend == park.suspend_row.event_hash
     assert len(checkpoint.grant_hash) == 64
 
-    _valid, _refusal = is_checkpoint_recoverable(checkpoint=checkpoint)
+    _valid, refusal = is_checkpoint_recoverable(checkpoint=checkpoint)
     # Recoverability checks grant authority first (which passes), then worktree uncommitted status
-    assert len(checkpoint.grant_hash) == 64
-    assert checkpoint.role == "backend"
+    assert "grant mismatch" not in refusal, refusal
