@@ -12,10 +12,17 @@ parallelism, without Bernstein needing to manage those subprocesses.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bernstein.agents.catalog import CatalogAgent
+
+_logger = logging.getLogger(__name__)
+
+# Tool set given to a catalog agent that declares none of its own. Matches the
+# bundled read-only ``explore`` subagent: shell access is opt-in, never a default.
+_READ_ONLY_TOOLS: tuple[str, ...] = ("Read", "Grep", "Glob")
 
 # ---------------------------------------------------------------------------
 # Subagent definitions per role
@@ -128,24 +135,25 @@ def build_agents_json(
     base_agents = _SUBAGENTS.get(role, {})
     result: dict[str, dict[str, Any]] = {name: {**defn} for name, defn in base_agents.items()}
 
-    if catalog_agents:
-        for agent in catalog_agents:
-            capabilities = getattr(agent, "capabilities", []) or []
-            if agent.role == role or role in capabilities or role == "all":
-                if agent.name in result:
-                    continue
-                tools = getattr(agent, "tools", None)
-                if not tools:
-                    tools = ["Read", "Grep", "Glob", "Bash"]
-                sub_def: dict[str, Any] = {
-                    "description": agent.description or f"Subagent for {agent.name}",
-                    "prompt": agent.system_prompt or "",
-                    "tools": list(tools),
-                }
-                model = getattr(agent, "model", None)
-                if model:
-                    sub_def["model"] = model
-                result[agent.name] = sub_def
+    for agent in catalog_agents or []:
+        if not (agent.role == role or role in agent.capabilities or role == "all"):
+            continue
+        if agent.name in result:
+            # The static role table wins, matching how bundled skill templates
+            # take precedence over catalog-installed ones.
+            _logger.debug("Catalog agent %s shadowed by an existing definition", agent.name)
+            continue
+        # An agent that declares no tools is the case we know least about, so
+        # it gets the read-only set the bundled ``explore`` subagent uses; a
+        # catalog opts into shell access by naming it.
+        sub_def: dict[str, Any] = {
+            "description": agent.description or f"Subagent for {agent.name}",
+            "prompt": agent.system_prompt,
+            "tools": list(agent.tools) if agent.tools else list(_READ_ONLY_TOOLS),
+        }
+        if agent.model:
+            sub_def["model"] = agent.model
+        result[agent.name] = sub_def
 
     if not result:
         return None
