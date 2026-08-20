@@ -56,8 +56,9 @@ passes.
 `verify_last_green_projection` closes that gap by re-reading the receipts
 and asking whether they produce the committed rows. The nightly workflow
 runs it as its own step (`--verify-projection`), in a fresh process,
-after the matrix and **before** the receipts are uploaded, so a bad
-projection is caught while the receipts are still on local disk.
+after `Open threshold-crossing regression issues` and before PR proposal,
+so a projection mismatch is caught while receipts are still on local disk
+without suppressing threshold-crossing regression issue creation.
 
 It checks both directions for the adapters actually in play: every
 passing receipt must have a row carrying that receipt's digest and this
