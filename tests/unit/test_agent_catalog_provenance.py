@@ -93,3 +93,56 @@ def test_fetch_agents_detects_tampered_catalog(tmp_path: Path) -> None:
     # Fetching now fails with AgentCatalogTamperedError
     with pytest.raises(AgentCatalogTamperedError, match="content digest mismatch"):
         asyncio.run(provider.fetch_agents())
+
+
+def test_fetch_agents_raises_on_unreadable_lockfile(tmp_path: Path) -> None:
+    """A corrupt or truncated agents.lock raises AgentCatalogTamperedError."""
+    target = tmp_path / "agency"
+    division = target / "engineering"
+    division.mkdir(parents=True)
+    (division / "backend.md").write_text("---\nname: Backend\n---\nPrompt", encoding="utf-8")
+    (target / "agents.lock").write_text("{corrupt_json:", encoding="utf-8")
+
+    provider = AgencyProvider(local_path=target)
+    with pytest.raises(AgentCatalogTamperedError, match="unreadable agents.lock"):
+        asyncio.run(provider.fetch_agents())
+
+
+def test_fetch_agents_raises_on_missing_content_digest(tmp_path: Path) -> None:
+    """An agents.lock missing the content_digest key raises AgentCatalogTamperedError."""
+    target = tmp_path / "agency"
+    division = target / "engineering"
+    division.mkdir(parents=True)
+    (division / "backend.md").write_text("---\nname: Backend\n---\nPrompt", encoding="utf-8")
+    (target / "agents.lock").write_text('{"url": "https://example.com"}', encoding="utf-8")
+
+    provider = AgencyProvider(local_path=target)
+    with pytest.raises(AgentCatalogTamperedError, match="records no content_digest"):
+        asyncio.run(provider.fetch_agents())
+
+
+def test_sync_catalog_self_heals_missing_lockfile(tmp_path: Path) -> None:
+    """When agents.lock is deleted, sync_catalog bypasses a fresh TTL marker to recreate it."""
+    target = tmp_path / "agency"
+    target.mkdir(parents=True)
+    (target / ".git").mkdir()
+    division = target / "engineering"
+    division.mkdir(parents=True)
+    (division / "backend.md").write_text("---\nname: Backend\n---\nPrompt", encoding="utf-8")
+
+    # Initial sync creates marker and lockfile
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        AgencyProvider.sync_catalog(target=target, force=True)
+
+    lock_file = target / "agents.lock"
+    assert lock_file.is_file()
+    lock_file.unlink()
+
+    # Second sync without force re-creates the missing lockfile despite fresh marker
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        success, msg = AgencyProvider.sync_catalog(target=target, force=False)
+
+    assert success is True
+    assert lock_file.is_file()

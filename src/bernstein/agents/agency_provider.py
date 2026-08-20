@@ -38,8 +38,7 @@ def compute_catalog_digest(target: Path) -> str:
     for file_path in sorted(target.glob("**/*.md")):
         rel_path = file_path.relative_to(target).as_posix()
         hasher.update(rel_path.encode("utf-8"))
-        with contextlib.suppress(OSError):
-            hasher.update(file_path.read_bytes())
+        hasher.update(file_path.read_bytes())
     return hasher.hexdigest()
 
 
@@ -405,15 +404,23 @@ class AgencyProvider:
         if lock_file.is_file():
             try:
                 data = json.loads(lock_file.read_text(encoding="utf-8"))
-                expected_digest = data.get("content_digest", "")
-                actual_digest = compute_catalog_digest(self._local_path)
-                if expected_digest and actual_digest != expected_digest:
-                    raise AgentCatalogTamperedError(
-                        f"Agent catalog at {self._local_path} content digest mismatch "
-                        f"(expected {expected_digest[:8]}, got {actual_digest[:8]})"
-                    )
-            except json.JSONDecodeError:
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                raise AgentCatalogTamperedError(
+                    f"Agent catalog at {self._local_path} has an unreadable agents.lock"
+                ) from exc
+
+            expected_digest = data.get("content_digest", "") if isinstance(data, dict) else ""
+            if not expected_digest:
+                raise AgentCatalogTamperedError(
+                    f"Agent catalog at {self._local_path} lockfile records no content_digest"
+                )
+
+            actual_digest = compute_catalog_digest(self._local_path)
+            if actual_digest != expected_digest:
+                raise AgentCatalogTamperedError(
+                    f"Agent catalog at {self._local_path} content digest mismatch "
+                    f"(expected {expected_digest[:8]}, got {actual_digest[:8]})"
+                )
 
         agents: list[CatalogAgent] = []
         for division_dir in sorted(self._local_path.iterdir()):
@@ -473,9 +480,12 @@ class AgencyProvider:
         if target is None:
             target = cls.default_cache_path()
 
-        # TTL check - skip if synced recently
+        from bernstein.core.persistence.atomic_write import write_atomic_json
+
+        # TTL check - skip if synced recently and lockfile exists
         marker = target.parent / f".{target.name}.synced"
-        if not force and marker.exists():
+        lock_file = target / "agents.lock"
+        if not force and marker.exists() and lock_file.is_file():
             age = time.time() - marker.stat().st_mtime
             if age < _SYNC_TTL_SECONDS:
                 return True, f"up to date (synced {age / 3600:.1f}h ago)"
@@ -514,14 +524,13 @@ class AgencyProvider:
 
         digest = compute_catalog_digest(target)
         target.mkdir(parents=True, exist_ok=True)
-        lock_file = target / "agents.lock"
         lock_payload = {
             "url": url,
             "content_digest": digest,
             "synced_at": datetime.now(UTC).isoformat(),
             "signature_present": False,
         }
-        lock_file.write_text(json.dumps(lock_payload, indent=2), encoding="utf-8")
+        write_atomic_json(lock_file, lock_payload)
 
         marker.touch()
         return True, f"Agency catalog {action} from {url}"
