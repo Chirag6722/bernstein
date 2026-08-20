@@ -857,6 +857,55 @@ def release_resources(
 # ---------------------------------------------------------------------------
 
 
+def resolve_task_role(sdd_dir: Path, task_id: str) -> str:
+    """Return the agent role recorded for ``task_id``, or ``""`` when unknown.
+
+    The park writes a checkpoint whose ``grant_hash`` is computed over the
+    role's permission set, and the resume re-derives that hash from
+    ``get_permissions_for_role(checkpoint.role)``. So the role is not a label:
+    it is the authority the resume is checked against, and a role that is
+    merely plausible produces a grant that binds nothing.
+
+    ``CheckpointRef`` has never carried a role, so it is read where the task
+    server persists it -- the task log under ``<sdd>/runtime/tasks.jsonl``,
+    which is the same record ``TaskStore`` replays on restart.
+
+    Returns ``""`` when the log is missing, unreadable, or holds no row for
+    ``task_id``. An absent role makes :func:`park_task` write an empty
+    ``grant_hash``, which the resume reads as "not grant-bound" -- an honest
+    absence, rather than a hash over a guessed role that would pass the
+    authority check by construction.
+
+    Args:
+        sdd_dir: Project ``.sdd`` directory.
+        task_id: The task whose role is wanted.
+
+    Returns:
+        The recorded role, or ``""`` when it cannot be determined.
+    """
+    from bernstein.core.tasks.models import TaskStoreUnavailable
+    from bernstein.core.tasks.task_store import TaskStore
+
+    try:
+        store = TaskStore(
+            jsonl_path=sdd_dir / "runtime" / "tasks.jsonl",
+            archive_path=sdd_dir / "archive" / "tasks.jsonl",
+        )
+        store.replay_jsonl()
+        task = store.get_task(task_id)
+    except (TaskStoreUnavailable, OSError, KeyError, ValueError):
+        # A task log we cannot read must not block the park: the suspension
+        # itself is still durable and auditable. It costs the checkpoint its
+        # grant binding, so it is logged rather than swallowed.
+        logger.warning(
+            "role lookup for task %s failed; parking without a grant-bound checkpoint",
+            task_id,
+            exc_info=True,
+        )
+        return ""
+    return task.role if task is not None else ""
+
+
 @dataclass(frozen=True)
 class ParkResult:
     """Anchors produced by :func:`park_task`.
@@ -1613,6 +1662,7 @@ __all__ = [
     "park_task",
     "record_task_suspension_row",
     "release_resources",
+    "resolve_task_role",
     "resume_task",
     "validate_task_id",
     "verify_suspension_continuity",
