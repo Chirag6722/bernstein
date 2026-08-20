@@ -142,7 +142,7 @@ def test_sync_catalog_self_heals_missing_lockfile(tmp_path: Path) -> None:
     # Second sync without force re-creates the missing lockfile despite fresh marker
     with patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
-        success, msg = AgencyProvider.sync_catalog(target=target, force=False)
+        success, _msg = AgencyProvider.sync_catalog(target=target, force=False)
 
     assert success is True
     assert lock_file.is_file()
