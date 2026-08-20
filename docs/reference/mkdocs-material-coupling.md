@@ -16,16 +16,16 @@ Because the documentation site is a published web surface rendering JavaScript, 
 
 Across **489 markdown files** in `docs/`:
 
-### Standard / Portable Extensions (~96% of corpus)
+### Standard / Portable Extensions (~98.6% of corpus)
 All configured Markdown extensions in `mkdocs.yml` use standard `Python-Markdown` or `pymdownx` packages:
 - `admonition` (`!!! note`), `pymdownx.details`, `pymdownx.superfences`, `pymdownx.tabbed` (`=== "Tab"`), `pymdownx.highlight`, `pymdownx.snippets`, `pymdownx.tasklist`, `pymdownx.keys`, `pymdownx.mark`, `pymdownx.critic`, `attr_list`, `md_in_html`, `def_list`, `tables`, `footnotes`, `abbr`.
 
 None of these belong exclusively to Material for MkDocs. They render natively under any standard MkDocs theme.
 
-### Material-Bound Syntax (~20 files / ~4% of corpus)
-Only ~20 files contain Material-bound markup:
-1. **Icon index syntax**: `:material-...` (7 files) and `:octicons-...` (6 files).
-2. **Grid cards**: `<div class="grid ...>` containers (7 files).
+### Material-Bound Syntax (7 files / ~1.4% of corpus)
+Only 7 files contain Material-bound markup — the section landing pages (`docs/index.md` plus each top-level section's `index.md`), which combine:
+1. **Icon index syntax**: `:material-...` (all 7) and `:octicons-...` (6 of the 7).
+2. **Grid cards**: `<div class="grid ...>` containers (all 7).
 
 ---
 
