@@ -121,6 +121,19 @@ def test_fetch_agents_raises_on_missing_content_digest(tmp_path: Path) -> None:
         asyncio.run(provider.fetch_agents())
 
 
+def test_fetch_agents_raises_on_non_mapping_lockfile(tmp_path: Path) -> None:
+    """A well-formed but non-mapping agents.lock fails closed instead of raising AttributeError."""
+    target = tmp_path / "agency"
+    division = target / "engineering"
+    division.mkdir(parents=True)
+    (division / "backend.md").write_text("---\nname: Backend\n---\nPrompt", encoding="utf-8")
+    (target / "agents.lock").write_text("[]", encoding="utf-8")
+
+    provider = AgencyProvider(local_path=target)
+    with pytest.raises(AgentCatalogTamperedError, match="records no content_digest"):
+        asyncio.run(provider.fetch_agents())
+
+
 def test_sync_catalog_self_heals_missing_lockfile(tmp_path: Path) -> None:
     """When agents.lock is deleted, sync_catalog bypasses a fresh TTL marker to recreate it."""
     target = tmp_path / "agency"
