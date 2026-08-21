@@ -29,6 +29,25 @@ class TestBuildFilteredEnv:
         assert result["HOME"] == "/root"
         assert result["LANG"] == "en_US.UTF-8"
 
+    def test_pythonpath_does_not_inherit_full_sys_path(self) -> None:
+        """PYTHONPATH contains only the bernstein package directory, not orchestrator's full sys.path (issue #4221)."""
+        fake_env = {"PATH": "/usr/bin", "HOME": "/root"}
+        fake_sys_path = [
+            "/usr/lib/python3.12",
+            "/usr/lib/python3.12/site-packages",
+            "/tmp/unrelated_dir",
+            "/orchestrator/internal",
+        ]
+        with (
+            patch("bernstein.adapters.env_isolation.os.environ", fake_env),
+            patch("sys.path", fake_sys_path),
+        ):
+            result = build_filtered_env()
+        # PYTHONPATH must NOT contain unrelated orchestrator sys.path entries
+        assert "PYTHONPATH" in result
+        assert "/tmp/unrelated_dir" not in result["PYTHONPATH"]
+        assert "/orchestrator/internal" not in result["PYTHONPATH"]
+
     def test_pathext_in_allowlist(self) -> None:
         """PATHEXT must be allowlisted so bernstein-worker's shutil.which can
         recognise .cmd/.bat/.exe shims on Windows (issue #2287).

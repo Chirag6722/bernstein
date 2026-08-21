@@ -281,6 +281,24 @@ def record_embedded_teams_opt_in(
         )
 
 
+def _get_bernstein_package_dir() -> str | None:
+    """Return the parent directory of the bernstein package if importable.
+
+    This ensures agent subprocesses can import bernstein without inheriting
+    the orchestrator's full sys.path as PYTHONPATH (issue #4221).
+    """
+    try:
+        import bernstein
+
+        if getattr(bernstein, "__file__", None):
+            pkg_root = Path(bernstein.__file__).resolve().parent.parent
+            if pkg_root.is_dir():
+                return str(pkg_root)
+    except Exception:
+        pass
+    return None
+
+
 def build_filtered_env(
     extra_keys: Iterable[str] = (),
     *,
@@ -372,16 +390,15 @@ def build_filtered_env(
     if not _embedded_teams_opt_in():
         env = {k: v for k, v in env.items() if not _is_embedded_teams_gate(k)}
 
-    # Ensure PYTHONPATH includes directories needed by bernstein-worker.
+    # Ensure PYTHONPATH includes only the directory needed to import bernstein.
     # When the orchestrator runs via ``uv run``, sys.executable may point
-    # to the framework Python rather than the venv Python.  Without an
-    # explicit PYTHONPATH the worker subprocess cannot import bernstein.
-    if "PYTHONPATH" not in env:
-        import sys
-
-        src_dirs = [p for p in sys.path if p and Path(p).is_dir()]
-        if src_dirs:
-            env["PYTHONPATH"] = os.pathsep.join(src_dirs)
+    # to the framework Python rather than the venv Python. Instead of dumping
+    # the orchestrator's full sys.path into PYTHONPATH (#4221), we narrow
+    # PYTHONPATH to the bernstein package root.
+    if env and "PYTHONPATH" not in env:
+        pkg_dir = _get_bernstein_package_dir()
+        if pkg_dir:
+            env["PYTHONPATH"] = pkg_dir
 
     # Overlay secrets from external provider (if configured).
     if secrets_config is not None:
