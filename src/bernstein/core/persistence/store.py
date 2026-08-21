@@ -16,8 +16,6 @@ from typing import TYPE_CHECKING, Literal
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from bernstein.core.server import TaskCreate
     from bernstein.core.tasks.models import Task
     from bernstein.core.tasks.task_store import ArchiveRecord
@@ -60,29 +58,6 @@ class BaseTaskStore(ABC):
     issue I/O without blocking the event loop.  In-memory stores simply
     define them as ``async def`` bodies without ``await``.
     """
-
-    def add_task_listener(self, listener: Callable[[Task], None]) -> None:
-        """Register a callback invoked whenever a task's status or record is updated."""
-        if not hasattr(self, "_task_listeners"):
-            self._task_listeners: list[Callable[[Task], None]] = []
-        if listener not in self._task_listeners:
-            self._task_listeners.append(listener)
-
-    def remove_task_listener(self, listener: Callable[[Task], None]) -> None:
-        """Unregister a task update callback."""
-        if hasattr(self, "_task_listeners") and listener in self._task_listeners:
-            self._task_listeners.remove(listener)
-
-    def _notify_task_updated(self, task: Task) -> None:
-        """Invoke registered task listeners with the updated task."""
-        listeners = getattr(self, "_task_listeners", None)
-        if not listeners:
-            return
-        for listener in list(listeners):
-            try:
-                listener(task)
-            except Exception:
-                logger.exception("Error in task listener for task %s", task.id)
 
     # -- lifecycle -----------------------------------------------------------
 

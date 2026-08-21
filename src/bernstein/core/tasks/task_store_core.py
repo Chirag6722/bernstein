@@ -3032,6 +3032,14 @@ class TaskStore:
                 )
                 cancelled.append(task)
 
+            # Dependents are stranded after the whole subtree is cancelled,
+            # not per task inside the loop. A dependent that is itself a
+            # descendant must be cancelled by the walk above rather than
+            # marked blocked first: ``cancellable`` does not include
+            # ``BLOCKED_BY_FAILED_DEP``, so an early mark would make the
+            # cascade skip it and a subtask would end in the wrong terminal
+            # status. Seeding one walk with the whole set also means a task
+            # depending on two cancelled tasks records a single nearest cause.
             if cancelled:
                 await self._cascade_failed_dependency(*(t.id for t in cancelled))
 
