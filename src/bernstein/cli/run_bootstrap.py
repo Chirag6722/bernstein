@@ -1677,6 +1677,7 @@ def _await_first_spawn_outcome(
     *,
     timeout_s: float = _FIRST_SPAWN_WAIT_S,
     poll_interval_s: float = _FIRST_SPAWN_POLL_S,
+    show_status: bool = False,
 ) -> tuple[str, str | None]:
     """Briefly poll the task server for the outcome of the first agent spawn.
 
@@ -1692,6 +1693,8 @@ def _await_first_spawn_outcome(
     Args:
         timeout_s: Maximum total time to wait for a verdict.
         poll_interval_s: Delay between polls.
+        show_status: When True, displays a transient terminal spinner while
+            polling takes longer than a single poll interval (gh-4257).
 
     Returns:
         ``("spawned", None)`` once at least one agent is live,
@@ -1702,35 +1705,50 @@ def _await_first_spawn_outcome(
     deadline = time.time() + timeout_s
     transient_reason: str | None = None
     unreachable_polls = 0
-    while True:
-        health = server_get("/health")
-        if not isinstance(health, dict):
-            unreachable_polls += 1
-            if unreachable_polls >= _FIRST_SPAWN_MAX_UNREACHABLE:
-                return "unknown", None
-        else:
-            unreachable_polls = 0
-            if int(health.get("agent_count", 0) or 0) > 0:
-                return "spawned", None
-            failed_page: Any = server_get("/tasks?status=failed&limit=50")
-            entries = failed_page.get("tasks", []) if isinstance(failed_page, dict) else []
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                reason = str(entry.get("result_summary") or "")
-                if not reason.startswith("Spawn failed"):
-                    continue
-                completed_at = float(entry.get("completed_at") or 0.0)
-                if completed_at < time.time() - _FIRST_SPAWN_FRESHNESS_S:
-                    continue
-                if "(transient" in reason:
-                    # A retry may still succeed - keep polling until deadline.
-                    transient_reason = reason
-                    continue
-                return "refused", reason
-        if time.time() >= deadline:
-            break
-        time.sleep(poll_interval_s)
+    poll_count = 0
+    status_cm: Any = None
+
+    try:
+        while True:
+            poll_count += 1
+            if show_status and poll_count == 2 and status_cm is None:
+                from bernstein.cli.helpers import console
+
+                status_cm = console.status("[dim]Waiting for first agent to spawn...[/dim]")
+                status_cm.__enter__()
+
+            health = server_get("/health")
+            if not isinstance(health, dict):
+                unreachable_polls += 1
+                if unreachable_polls >= _FIRST_SPAWN_MAX_UNREACHABLE:
+                    return "unknown", None
+            else:
+                unreachable_polls = 0
+                if int(health.get("agent_count", 0) or 0) > 0:
+                    return "spawned", None
+                failed_page: Any = server_get("/tasks?status=failed&limit=50")
+                entries = failed_page.get("tasks", []) if isinstance(failed_page, dict) else []
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    reason = str(entry.get("result_summary") or "")
+                    if not reason.startswith("Spawn failed"):
+                        continue
+                    completed_at = float(entry.get("completed_at") or 0.0)
+                    if completed_at < time.time() - _FIRST_SPAWN_FRESHNESS_S:
+                        continue
+                    if "(transient" in reason:
+                        # A retry may still succeed - keep polling until deadline.
+                        transient_reason = reason
+                        continue
+                    return "refused", reason
+            if time.time() >= deadline:
+                break
+            time.sleep(poll_interval_s)
+    finally:
+        if status_cm is not None:
+            status_cm.__exit__(None, None, None)
+
     if transient_reason is not None:
         return "refused", transient_reason
     return "unknown", None

@@ -604,7 +604,7 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _raise_if_no_plan_after_spawn() -> None:
+def _raise_if_no_plan_after_spawn(*, show_status: bool = False) -> None:
     """Diagnose a spawned-then-dead agent before a display branch's own wait.
 
     The non-interactive detach path (issue #3528, #4246) briefly confirms the
@@ -632,7 +632,7 @@ def _raise_if_no_plan_after_spawn() -> None:
     from bernstein.cli.run_bootstrap import _await_first_spawn_outcome, _poll_no_plan_after_spawn
     from bernstein.core.errors import BernsteinFirstRunError, ErrorCategory
 
-    outcome, _reason = _await_first_spawn_outcome()
+    outcome, _reason = _await_first_spawn_outcome(show_status=show_status)
     if outcome == "spawned" and _poll_no_plan_after_spawn() is not None:
         raise BernsteinFirstRunError(
             "Spawned agent exited before producing a work plan",
@@ -709,7 +709,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
         caps = detect_capabilities()
 
         if caps.supports_textual:
-            _raise_if_no_plan_after_spawn()
+            _raise_if_no_plan_after_spawn(show_status=True)
             try:
                 from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
@@ -728,7 +728,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         elif caps.is_tty:
             # TTY but Textual not supported -- use Rich fallback (TUI-003)
-            _raise_if_no_plan_after_spawn()
+            _raise_if_no_plan_after_spawn(show_status=True)
             _try_fallback_display()
             _exit_nonzero_on_unhealthy_run(_poll_quiescent_status())
         else:
