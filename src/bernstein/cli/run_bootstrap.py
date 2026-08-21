@@ -2516,7 +2516,12 @@ def _run_impl(
         from bernstein.core.plan_approval import configure_plan_models, create_plan
         from bernstein.core.plan_builder import PlanBuilder
 
+        # --plan-only previews the run without reading a seed here, so there
+        # is no role policy to apply; the explicit None keeps the required
+        # positional honest rather than letting the panel fall back to the
+        # complexity default for the model.
         configure_plan_models(
+            None,
             default_model=model,
             default_cli=cli,
         )
