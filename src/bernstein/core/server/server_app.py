@@ -1047,6 +1047,14 @@ def create_app(
 
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
     sse_bus = SSEBus()
+
+    def _publish_task_update(task_obj: Any) -> None:
+        sse_bus.publish(
+            "task_update",
+            json.dumps({"id": task_obj.id, "status": task_obj.status.value}),
+        )
+
+    store.add_task_listener(_publish_task_update)
     workdir = (
         jsonl_path.parent.parent.parent
         if jsonl_path.parent.name == "runtime" and jsonl_path.parent.parent.name == ".sdd"
