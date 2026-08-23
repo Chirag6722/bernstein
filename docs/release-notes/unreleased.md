@@ -18,6 +18,13 @@ A gate verdict receipt sealed before three-valued verdicts carried no `reason`
 in its evidence. The parser now defaults it, so a binary-era receipt still
 parses instead of being rejected as malformed (#4182).
 
+## `/status` agrees with itself about live agents
+
+`summary.agents`, `agents.count` and the rendered `Active agents: N` line each
+filtered the same session with a different expression, so a reaped agent could
+read as active on one surface and not on another. A single `_agent_is_alive`
+predicate now owns the call on every surface (#4360).
+
 ## Spawn-time prompt budget
 
 An assembled agent prompt is now measured before the adapter is invoked, and a
