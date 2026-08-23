@@ -56,6 +56,24 @@ __all__ = [
 type _CAST_DICT_STR_ANY = dict[str, Any]
 
 
+# Canonical "is this agent still alive?" test. ``AgentSession.status`` is a
+# plain string (a Literal of "starting" / "working" / "idle" / "dead"), but
+# the /status surfaces historically tested it two different ways -
+# ``str(agent.status) != "dead"`` in one place and ``agent.status != "dead"``
+# in another. That let ``summary.agents``, ``agents.count`` and the rendered
+# ``Active agents: N`` line all disagree about the same run (issue #4360).
+# One helper owns that call so every surface reports the same live count.
+#
+# That helper is ``lifecycle.is_agent_alive``, which also accepts the agent
+# object and the snapshot dict, because the third surface the issue names -
+# the rendered ``Active agents: N`` line in ``cli/ui.py`` - holds a different
+# shape than these routes do. This module-local name stays as a thin
+# delegate so the status-string call site and its test keep reading plainly.
+def _agent_is_alive(status: str) -> bool:
+    """Return True when an agent status is not a reaped (dead) one."""
+    return is_agent_alive(status)
+
+
 def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
 
@@ -381,7 +399,8 @@ def _status_agent_items(
 ) -> list[dict[str, Any]]:
     """Build normalized agent rows for shared operational surfaces."""
     items: list[dict[str, Any]] = []
-    live_agents = list(store.agents.values())
+    store_agents = store.agents.values()
+    live_agents = [agent for agent in store_agents if _agent_is_alive(agent.status)]
     for agent in live_agents:
         snapshot = agent_snapshots.get(agent.id, {})
         model_name = _agent_model_label(agent)
@@ -412,6 +431,10 @@ def _status_agent_items(
     if items:
         return items
 
+    # No live agent in the store: fall back to the on-disk snapshot, which is
+    # the archival view of the run. Every snapshot row is emitted, reaped ones
+    # included - issue #953 holds this path to a full dict per agent, and the
+    # caller counts liveness per row rather than trusting the list length.
     for snapshot in agent_snapshots.values():
         items.append(
             {
@@ -898,6 +921,8 @@ def status_dashboard(request: Request) -> JSONResponse:
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)
     total_cost_by_role = store.cost_by_role()
+    # Copy before hydrating: _populate_agents_from_snapshots writes into the
+    # dict it is given, and store.agents is the live store, not a view.
     agents = dict(store.agents)
     if not agents and agent_snapshots:
         _populate_agents_from_snapshots(agents, agent_snapshots)
@@ -946,9 +971,10 @@ def status_dashboard(request: Request) -> JSONResponse:
         "count": len(tasks),
         "items": _status_task_items(tasks, now),
     }
+    agent_items = _status_agent_items(store, agent_snapshots, total_cost_by_role, now)
     payload["agents"] = {
-        "count": len(live_agents),
-        "items": _status_agent_items(store, agent_snapshots, total_cost_by_role, now),
+        "count": sum(1 for item in agent_items if is_agent_alive(str(item.get("status", "")))),
+        "items": agent_items,
     }
     payload["costs"] = live_costs
     payload["alerts"] = build_alerts(store, live_agents, total_spent, now, agent_snapshots, tenant_id)
@@ -1223,7 +1249,10 @@ def dashboard_data(request: Request) -> JSONResponse:
     tenant_id = _resolve_request_tenant_scope(request)
     summary = store.status_summary(tenant_id=tenant_id)
     tasks = store.list_tasks(tenant_id=tenant_id)
-    agents = store.agents
+    # Copy for the same reason as above: the hydration below writes into this
+    # dict, and store.agents is the live store. Without the copy, reading
+    # /status injects snapshot-reconstructed sessions into the running store.
+    agents = dict(store.agents)
     now = time.time()
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)

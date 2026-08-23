@@ -51,8 +51,14 @@ async def test_live_agent_count_consistent_across_all_surfaces(app_with_store) -
     # 2. status --json -> agents.count
     assert data["agents"]["count"] == 1
 
-    # 3. status --json -> agents.items contains both agents for detailed observability
-    assert len(data["agents"]["items"]) == 2
+    # 3. status --json -> agents.items lists the live sessions only.
+    # The human line renders len(items), so listing a reaped agent here would
+    # make "Active agents: N" over-report the very count this test pins.
+    # A reaped row is still preserved on the snapshot fallback path, which is
+    # where issue #953 asks the producer never to drop one - see
+    # tests/unit/test_run_summary_issue_953.py.
+    assert len(data["agents"]["items"]) == 1
+    assert data["agents"]["items"][0]["id"] == "agent-backend-1"
 
     # 4. Human-rendered CLI output -> Active agents: 1
     _tasks, _agents, stats, _per_role, _provider_status, _dependency_scan = _extract_run_stats(data)
