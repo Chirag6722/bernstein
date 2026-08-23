@@ -1219,6 +1219,12 @@ class AgentSession:
     # event, so the session record names exactly the digests the chain
     # attests. Empty when the session's tasks declare no attachments.
     multimodal_attachments: list[dict[str, str]] = field(default_factory=list)
+    # Spawn-time prompt budget measurement (#4377). Stamped before the
+    # adapter is invoked so the cost is queryable without waiting for the
+    # session to end.
+    spawn_prompt_tokens: int = 0  # estimated token count of assembled prompt at spawn
+    spawn_prompt_utilization_pct: float = 0.0  # percentage of context window consumed by prompt
+    spawn_prompt_over_budget: bool = False  # True when prompt exceeded the budget threshold
 
 
 class IsolationMode(StrEnum):
@@ -1502,8 +1508,6 @@ class ConvergenceGuardConfig:
         max_spawn_rate: Maximum spawns per minute before blocking spawns.
         error_rate_window_seconds: Look-back window for computing error rate.
         spawn_rate_window_seconds: Look-back window for computing spawn rate.
-        min_error_rate_samples: Observations the error-rate window must hold
-            before that gate may block a wave.
     """
 
     max_pending_merges: int = 10
@@ -1512,7 +1516,6 @@ class ConvergenceGuardConfig:
     max_spawn_rate: float = 12.0
     error_rate_window_seconds: int = 300  # 5 minutes
     spawn_rate_window_seconds: int = 60  # 1 minute
-    min_error_rate_samples: int = 3
 
 
 @dataclass(frozen=True)
