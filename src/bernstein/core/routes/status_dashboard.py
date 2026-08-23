@@ -23,6 +23,7 @@ from bernstein.core.runtime_state import (
     read_config_state,
     read_supervisor_state,
 )
+from bernstein.core.tasks.lifecycle import is_agent_alive
 from bernstein.core.worktree import WorktreeManager
 from bernstein.dashboard import STATIC_DIR
 
@@ -384,7 +385,10 @@ def _status_agent_items(
     for agent in live_agents:
         snapshot = agent_snapshots.get(agent.id, {})
         model_name = _agent_model_label(agent)
-        role_alive_count = max(1, len([candidate for candidate in live_agents if candidate.role == agent.role]))
+        role_alive_count = max(
+            1,
+            len([candidate for candidate in live_agents if candidate.role == agent.role and is_agent_alive(candidate)]),
+        )
         estimated_cost = total_cost_by_role.get(agent.role, 0.0) / role_alive_count
         items.append(
             {
@@ -513,7 +517,7 @@ def _health_components(request: Request, store: TaskStore) -> dict[str, dict[str
         database_status = "down"
         database_detail = str(exc)
 
-    agent_count = int(getattr(store, "agent_count", 0))
+    agent_count = sum(1 for a in store.agents.values() if is_agent_alive(a))
     agents_detail = f"{agent_count} active" if agent_count > 0 else "no active agents"
 
     return {
@@ -894,7 +898,10 @@ def status_dashboard(request: Request) -> JSONResponse:
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)
     total_cost_by_role = store.cost_by_role()
-    live_agents = [agent for agent in store.agents.values() if str(agent.status) != "dead"]
+    agents = dict(store.agents)
+    if not agents and agent_snapshots:
+        _populate_agents_from_snapshots(agents, agent_snapshots)
+    live_agents = [agent for agent in agents.values() if is_agent_alive(agent)]
     total_spent = float(live_costs.get("spent_usd") or sum(total_cost_by_role.values()))
 
     # Recently completed tasks still within grace period (visible in panels).
@@ -940,7 +947,7 @@ def status_dashboard(request: Request) -> JSONResponse:
         "items": _status_task_items(tasks, now),
     }
     payload["agents"] = {
-        "count": len(live_agents) if live_agents else len(agent_snapshots),
+        "count": len(live_agents),
         "items": _status_agent_items(store, agent_snapshots, total_cost_by_role, now),
     }
     payload["costs"] = live_costs
@@ -1225,8 +1232,8 @@ def dashboard_data(request: Request) -> JSONResponse:
     if not agents:
         _populate_agents_from_snapshots(agents, agent_snapshots)
 
-    all_agents = agents.values()
-    alive_agents = [a for a in all_agents if a.status != "dead"]
+    all_agents = list(agents.values())
+    alive_agents = [a for a in all_agents if is_agent_alive(a)]
     cost_by_role = store.cost_by_role()
     total_cost = sum(cost_by_role.values())
     agent_count = len(alive_agents)
