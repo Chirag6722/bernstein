@@ -29,6 +29,22 @@ if TYPE_CHECKING:
 __all__ = ["blocking_dependency", "unreachable_tasks"]
 
 
+def dependency_can_never_satisfy(dependency: Task) -> bool:
+    """Can ``dependency``, in its recorded status, ever satisfy a dependent?
+
+    The single place this question is answered about a status. Three callers
+    ask it - ``TaskStore._dependencies_satisfied`` when deciding whether a
+    claim may proceed, ``DAGExecutor.resolve_edge`` when resolving an edge,
+    and ``blocking_dependency`` below - and before this they each carried
+    their own copy of the status logic with nothing keeping the three in step.
+
+    Status is all this answers. Whether a *retry* of the dependency is still
+    in flight is a question about the task table rather than about one status,
+    so ``blocking_dependency`` asks that separately.
+    """
+    return dependency.status in UNSUCCESSFUL_TERMINAL_STATUSES
+
+
 def _is_task_succeeded_or_retrying(dep_id: str, tasks: Mapping[str, Task]) -> bool:
     """Return True if dep_id or a retry of dep_id is active or succeeded."""
     for t in tasks.values():
@@ -59,7 +75,7 @@ def blocking_dependency(task: Task, tasks: Mapping[str, Task]) -> str | None:
         dep_id
         for dep_id in task.depends_on
         if (dep := tasks.get(dep_id)) is not None
-        and dep.status in UNSUCCESSFUL_TERMINAL_STATUSES
+        and dependency_can_never_satisfy(dep)
         and not _is_task_succeeded_or_retrying(dep_id, tasks)
     )
     return blockers[0] if blockers else None
