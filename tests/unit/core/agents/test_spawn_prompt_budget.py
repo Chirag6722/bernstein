@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from bernstein.core.agents.spawn_prompt_budget import (
     SpawnPromptBudgetResult,
     check_spawn_prompt_budget,
     get_spawn_prompt_budget,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_sections(*pairs: tuple[str, int]) -> list[tuple[str, str]]:
@@ -124,3 +129,57 @@ class TestGetSpawnPromptBudget:
         sections = _make_sections(("role", 400))
         check_spawn_prompt_budget(sections, model="sonnet", session_id="")
         assert get_spawn_prompt_budget("") is None
+
+
+class TestBudgetRunsOnTheSpawnPath:
+    """The budget must be measured on the prompt the adapter is handed.
+
+    ``spawn_prompt._render_prompt`` and ``spawner_core._render_prompt_with_receipt``
+    are two separate prompt builders, and only the second one runs when an
+    agent is actually spawned. A budget wired into the first reports on a
+    prompt no run ever sees, so these tests pin the check to the spawner's
+    own builder.
+    """
+
+    def test_spawner_builder_records_a_budget(self, tmp_path: Path, make_task) -> None:
+        """Rendering through the spawner's builder caches a budget result."""
+        from bernstein.core.agents.spawner_core import _render_prompt_with_receipt
+
+        session_id = "budget-on-spawn-path"
+        prompt, _receipt = _render_prompt_with_receipt(
+            [make_task()],
+            tmp_path,
+            tmp_path,
+            session_id=session_id,
+            model="sonnet",
+        )
+
+        assert prompt
+        recorded = get_spawn_prompt_budget(session_id)
+        assert recorded is not None, (
+            "the spawner's prompt builder did not measure a budget - a budget "
+            "checked only in spawn_prompt._render_prompt never sees a real spawn"
+        )
+        assert recorded.total_estimated_tokens > 0
+        assert recorded.section_breakdown
+
+    def test_spawner_builder_flags_an_over_budget_prompt(
+        self, tmp_path: Path, make_task
+    ) -> None:
+        """A prompt far past the absolute fallback is recorded as over budget."""
+        from bernstein.core.agents.spawner_core import _render_prompt_with_receipt
+
+        session_id = "budget-on-spawn-path-over"
+        # No model, so the absolute fallback budget applies; the goal alone
+        # carries enough characters to exceed it.
+        _render_prompt_with_receipt(
+            [make_task(description="y" * 400_000)],
+            tmp_path,
+            tmp_path,
+            session_id=session_id,
+        )
+
+        recorded = get_spawn_prompt_budget(session_id)
+        assert recorded is not None
+        assert recorded.over_budget is True
+        assert recorded.warning_message

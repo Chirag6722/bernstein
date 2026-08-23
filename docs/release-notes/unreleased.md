@@ -17,3 +17,13 @@ Nothing yet: v3.17.1 was cut from this page.
 A gate verdict receipt sealed before three-valued verdicts carried no `reason`
 in its evidence. The parser now defaults it, so a binary-era receipt still
 parses instead of being rejected as malformed (#4182).
+
+## Spawn-time prompt budget
+
+An assembled agent prompt is now measured before the adapter is invoked, and a
+prompt consuming more than a configurable fraction of the model's context
+window logs a warning naming the sections responsible. The measurement runs on
+the spawner's own prompt builder, so it reports on the prompt a run actually
+sends. Thresholds: `TOKEN.spawn_prompt_budget_pct` (default 25%) with
+`TOKEN.spawn_prompt_budget_abs` (32,768 tokens) as the fallback when the
+model's context window is unknown (#4377).
