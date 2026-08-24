@@ -22,14 +22,12 @@ invocation and streams results back; flat layout, one module per tool.
 - Every adapter has a YAML contract in `tests/contract/contracts/` naming
   its required flags/subcommands. Capability assertions only, never snapshot
   `--help` text (`_contract.py` docstring); drift is a hard fail (exit 2).
-- Artifact writes go through the lineage-spine boundary in `base.py`;
-  do not add adapter-local artifact write paths
-  (`../core/lineage/spine.py`).
+- Artifact writes go through the lineage-spine boundary in `base.py`; do not
+  add adapter-local artifact write paths (`../core/lineage/spine.py`).
 - Keep adapter module import time free of replay-journal imports;
   `base.py` duplicates capability constants for exactly this reason.
-- Default spawned-process timeout is 30 minutes
-  (`DEFAULT_TIMEOUT_SECONDS` in `base.py`); adapters get SIGTERM, then
-  SIGKILL after a grace period.
+- Default spawned-process timeout is 30 minutes (`DEFAULT_TIMEOUT_SECONDS` in
+  `base.py`); adapters get SIGTERM, then SIGKILL after a grace period.
 
 ## Testing
 

@@ -22,18 +22,16 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
   group- or world-readable key is a hard error at load time (`audit.py`).
 - Event-type constants are append-only: add `EVENT_*` names, never edit or reuse
   existing ones (`audit_chain.py` module docstring).
-- Chain helpers take the chain as a parameter (no singleton imports) and log
-  through `log_with_prev_digest`, so `prev_chain_digest` lands in the payload
-  before the HMAC (`audit_chain.py`).
+- Chain helpers take the chain as a parameter (no singleton imports) and log through
+  `log_with_prev_digest`, so `prev_chain_digest` lands in the payload before the HMAC (`audit_chain.py`).
 - The audit chain is opt-in at runtime (`BERNSTEIN_AUDIT=1`, read in
   `../orchestration/orchestrator.py`); features degrade without it.
 - Untrusted paths are opened, never compared: a path-comparison check validates
   one lookup while the open performs another (`sigstore_attestation.py`).
-- Same rule for tenant writes: the whole subtree (`backlog`, `metrics`,
-  `runtime`, `audit`, ...) is created and opened through `TenantPaths.anchor`
-  (`../persistence/anchored_write.py`), rotation included. Needs `dir_fd` +
-  `O_NOFOLLOW`; lacking either, the refusal narrows to the final component or
-  vanishes, never weakens (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
+- Same rule for tenant writes: the whole subtree (`backlog`, `metrics`, `runtime`, `audit`, ...) is
+  created and opened through `TenantPaths.anchor` (`../persistence/anchored_write.py`), rotation
+  included. Needs `dir_fd` + `O_NOFOLLOW`; lacking either, the refusal narrows to the final
+  component or vanishes, never weakens (`ANCHORED_{WRITE,ROTATE}_SUPPORTED`).
 
 ## Testing
 
