@@ -13,6 +13,8 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 | `intent_capsule.py` | Signed task-goal capsules with drift escalation |
 | `sigstore_attestation.py` | Rekor attestation with a local Ed25519 fallback; verifies local bundles |
 | `result_receipt_bundle.py` | Result receipt bundle with offline DSSE verification |
+| `capability_delta.py` | Detects capability-widening changes across workflows and permission configs |
+| `surface_grant_delta.py` | Lineage gate grant analysis across diffs |
 
 ## Invariants
 
@@ -37,4 +39,4 @@ The HMAC-chained audit log, Ed25519 install identity, and approval / policy enfo
 
 Single files only: `uv run pytest tests/unit/test_audit.py -x -q`.
 
-<!-- Reviewed 2026-08-18 against this subtree; the notes above still hold. -->
+<!-- Reviewed 2026-08-24 against this subtree; the notes above still hold. -->
