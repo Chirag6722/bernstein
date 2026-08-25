@@ -15,3 +15,4 @@ def test_dashboard_command_is_deprecated_and_directs_to_gui_serve() -> None:
     assert result.exit_code == 1
     assert "gui serve" in result.output
     assert "/ui" in result.output
+    assert "bernstein[gui]" in result.output

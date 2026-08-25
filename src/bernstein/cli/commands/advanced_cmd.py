@@ -178,10 +178,12 @@ def _build_live_splash_context(seed_path: Path | None, seed_cfg: Any) -> dict[st
 
 @click.command("dashboard", hidden=True)
 def dashboard() -> None:
-    """Deprecated: use 'bernstein gui serve' instead (#4395)."""
+    """The legacy dashboard has been removed in favor of 'bernstein gui serve' (#4395)."""
     console.print(
         "[yellow]'bernstein dashboard' has been removed in favor of the GUI surface.[/yellow]\n"
-        "Run [cyan]bernstein gui serve[/cyan] to open the maintained web UI at [cyan]/ui[/cyan]."
+        "Run [cyan]bernstein gui serve[/cyan] to open the maintained web UI at [cyan]/ui[/cyan].\n"
+        "Note: Requires the GUI extra: [cyan]pip install 'bernstein\\[gui]'[/cyan]\n"
+        "(or [cyan]uv add 'bernstein\\[gui]'[/cyan])."
     )
     sys.exit(1)
 
