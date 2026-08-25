@@ -807,8 +807,78 @@ class TestVerifyTask:
         assert len(failed) == 1
         assert "b.py" in failed[0]
 
-    def test_no_signals_means_pass(self, tmp_path: Path) -> None:
-        task = _make_task(signals=[])
+    def test_planning_role_without_signals_passes(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-100",
+            title="Plan architecture",
+            description="Decompose into subtasks",
+            role="manager",
+            completion_signals=[],
+        )
+        passed, failed = verify_task(task, tmp_path)
+        assert passed is True
+        assert failed == []
+
+    def test_research_task_without_signals_passes(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-101",
+            title="Research options",
+            description="Explore patterns",
+            role="backend",
+            task_type=TaskType.RESEARCH,
+            completion_signals=[],
+        )
+        passed, failed = verify_task(task, tmp_path)
+        assert passed is True
+        assert failed == []
+
+    def test_execution_task_without_signals_or_commits_is_rejected(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-102",
+            title="Fix bug",
+            description="Write patch",
+            role="backend",
+            completion_signals=[],
+        )
+        passed, failed = verify_task(task, tmp_path)
+        assert passed is False
+        assert len(failed) == 1
+        assert "empty task work" in failed[0]
+
+    def test_non_code_artifact_spec_without_signals_passes(self, tmp_path: Path) -> None:
+        from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
+
+        task = Task(
+            id="T-103",
+            title="Generate report",
+            description="Produce finding artifact",
+            role="security",
+            artifact_spec=ArtifactSpec(kind=ArtifactKind.FINDING),
+            completion_signals=[],
+        )
+        passed, failed = verify_task(task, tmp_path)
+        assert passed is True
+        assert failed == []
+
+    def test_execution_task_with_attributed_commit_passes_without_signals(self, tmp_path: Path) -> None:
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "fix.py").write_text("fixed")
+        subprocess.run(["git", "add", "fix.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "fix: resolve bug (T-104)"], cwd=tmp_path, check=True, capture_output=True
+        )
+
+        task = Task(
+            id="T-104",
+            title="Fix bug",
+            description="Write patch",
+            role="backend",
+            completion_signals=[],
+        )
         passed, failed = verify_task(task, tmp_path)
         assert passed is True
         assert failed == []
@@ -839,17 +909,26 @@ class TestRunJanitor:
         assert results[1].passed is False
 
     @pytest.mark.asyncio
-    async def test_skips_tasks_without_signals(self, tmp_path: Path) -> None:
-        t1 = _make_task(id="T-001", signals=[])
+    async def test_skips_planning_tasks_without_signals(self, tmp_path: Path) -> None:
+        t1 = Task(id="T-001", title="Plan", description="Plan", role="manager", completion_signals=[])
         t2 = _make_task(
             id="T-002",
             signals=[CompletionSignal(type="path_exists", value="missing.py")],
         )
         results = await run_janitor([t1, t2], tmp_path)
 
-        # T-001 has no signals so it is skipped
+        # T-001 is a planning task with no signals, so it is skipped
         assert len(results) == 1
         assert results[0].task_id == "T-002"
+
+    @pytest.mark.asyncio
+    async def test_execution_task_without_signals_in_run_janitor_is_rejected(self, tmp_path: Path) -> None:
+        task = Task(id="T-003", title="QA", description="QA", role="qa", completion_signals=[])
+        results = await run_janitor([task], tmp_path)
+
+        assert len(results) == 1
+        assert results[0].task_id == "T-003"
+        assert results[0].passed is False
 
     @pytest.mark.asyncio
     async def test_empty_task_list(self, tmp_path: Path) -> None:

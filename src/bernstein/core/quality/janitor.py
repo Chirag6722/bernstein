@@ -82,8 +82,8 @@ _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 # attributed diff. Attribution inputs/outputs are logged on every verdict so
 # a future misattribution is a log read, not a proof-archive autopsy.
 
-# Task types that legitimately produce no diff (research/exploration output
-# lives in task notes, not the repo). Everything else must show work.
+# Task types and roles that legitimately produce no diff (research/exploration output
+# lives in task notes, not the repo; planning tasks produce subtasks). Everything else must show work.
 #
 # TaskType.UPGRADE_PROPOSAL is included because verify_upgrade_task() (see
 # the UPGRADE_PROPOSAL branch above) is the real pass/fail authority for
@@ -92,6 +92,24 @@ _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 # the generic empty-diff guard would still hard-reject an already-verified
 # upgrade proposal.
 _NOOP_TASK_TYPES = frozenset({TaskType.RESEARCH, TaskType.UPGRADE_PROPOSAL})
+_PLANNING_ROLES = frozenset({"manager", "architect", "visionary", "vp", "analyst"})
+
+
+def _is_planning_or_non_code_task(task: Task) -> bool:
+    """True when a task legitimately produces no repository code commits.
+
+    Planning roles (manager, architect, visionary, etc.), exploration task types
+    (research, upgrade proposals), and tasks declaring non-code artifact kinds
+    (report, finding, dataset, etc.) produce ledger output or posted artifacts
+    rather than git commits.
+    """
+    if task.task_type in _NOOP_TASK_TYPES:
+        return True
+    if str(getattr(task, "role", "")).lower() in _PLANNING_ROLES:
+        return True
+    artifact_kind = getattr(getattr(task, "artifact_spec", None), "kind", None)
+    return artifact_kind is not None and str(artifact_kind) not in ("code_diff", "ArtifactKind.CODE_DIFF")
+
 
 _ATTRIBUTION_MAX_COMMITS = 50
 
@@ -485,6 +503,20 @@ def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
             if detail:
                 desc = f"{desc} ({detail})"
             failed.append(desc)
+
+    # Empty signals guard (issue #4560): an execution task declaring zero
+    # completion signals must NOT pass unconditionally when it produced no
+    # attributed commits or work.
+    if not task.completion_signals and not _is_planning_or_non_code_task(task):
+        if _is_git_repo(workdir):
+            attributed_commits, attributed_files, reason = _attribute_task_work(task, workdir)
+            if not attributed_commits and not attributed_files:
+                failed.append(
+                    f"empty task work: no completion signals declared and zero attributed commits/files ({reason})"
+                )
+        else:
+            failed.append("empty task work: no completion signals declared")
+
     all_passed = len(failed) == 0
     return all_passed, failed
 
@@ -956,7 +988,7 @@ async def run_janitor(
         )
     results: list[JanitorResult] = []
     for task in tasks:
-        if not task.completion_signals and lineage_gate_result is None:
+        if not task.completion_signals and lineage_gate_result is None and _is_planning_or_non_code_task(task):
             continue
 
         judge_verdict: JudgeVerdict | None = None
@@ -994,7 +1026,7 @@ async def run_janitor(
                 attributed_files,
                 attribution_reason,
             )
-            if not attributed_files and task.task_type not in _NOOP_TASK_TYPES:
+            if not attributed_files and not _is_planning_or_non_code_task(task):
                 # An empty attributable diff normally means a 0-file
                 # rubber-stamp or a crash-recovery orphan auto-completion and
                 # must be rejected. BUT a task can legitimately land real work
@@ -1028,13 +1060,16 @@ async def run_janitor(
                     logger.warning(
                         "janitor REJECT (empty diff): task=%s task_type=%s -- no changed files "
                         "attributable to this task (attribution: %s); a task with zero changed "
-                        "files must not be accepted unless it is an explicit no-op task type %s "
+                        "files must not be accepted unless it is a planning role or non-code task "
                         "or it has a non-trivial passing completion signal",
                         task.id,
                         task.task_type.value,
                         attribution_reason,
-                        sorted(t.value for t in _NOOP_TASK_TYPES),
                     )
+        elif not task.completion_signals and not _is_planning_or_non_code_task(task):
+            all_passed = False
+            signal_results.append(("signals:empty", False, "no completion signals declared on execution task"))
+            failed_descs.append("signals:empty: no completion signals declared on execution task")
 
         diff = _get_git_diff(task, workdir, attributed_commits=attributed_commits)
         guardrail_results: list[GuardrailResult] = run_guardrails(
