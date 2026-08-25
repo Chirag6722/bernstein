@@ -889,3 +889,63 @@ def test_event_gated_required_jobs_declare_their_merge_group_tolerance(
         "by the roll-up and wedges the queue. Add the job to DOCS_ONLY_SKIPPABLE, MACOS_GATED or PUSH_ONLY with "
         "the reason its skip is safe, or drop the event condition."
     )
+
+
+def test_every_queue_required_context_emits_on_all_pull_requests_unconditionally(
+    queue_required_contexts: tuple[str, ...],
+) -> None:
+    """Every required check must emit on all PRs without being wedged by a paths filter (#4557).
+
+    If an emitting workflow has a `paths` or `paths-ignore` filter on `pull_request`, it
+    must have a companion stub (like `ci.yml` + `ci-gate-stub.yml`) covering non-matching paths,
+    or non-matching PRs will wait forever for `Required status check '<name>' is expected.`
+    """
+    for context in queue_required_contexts:
+        emitters: list[tuple[str, dict[str, Any]]] = []
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            try:
+                doc = _load(path)
+            except (AssertionError, yaml.YAMLError):
+                continue
+            text = path.read_text(encoding="utf-8")
+            jobs = doc.get("jobs")
+            if not isinstance(jobs, dict):
+                continue
+            for key, job in jobs.items():
+                if not isinstance(job, dict):
+                    continue
+                # Check if this job publishes `context`
+                name = job.get("name", key)
+                strategy = job.get("strategy")
+                is_emitter = False
+                if name == context or f"--name {context}" in text or (isinstance(name, str) and f"'{context}'" in name):
+                    is_emitter = True
+                elif isinstance(strategy, dict) and "${{" in str(name):
+                    matrix = strategy.get("matrix", {})
+                    includes = matrix.get("include", []) if isinstance(matrix, dict) else []
+                    for cell in includes:
+                        if isinstance(cell, dict):
+                            rendered = name
+                            for k, v in cell.items():
+                                rendered = rendered.replace(f"${{{{ matrix.{k} }}}}", str(v))
+                                rendered = rendered.replace(f"${{{{matrix.{k}}}}}", str(v))
+                            if rendered == context:
+                                is_emitter = True
+                                break
+                if is_emitter:
+                    pr_trigger = _triggers(doc).get("pull_request")
+                    emitters.append((path.name, pr_trigger if isinstance(pr_trigger, dict) else {}))
+
+        assert emitters, f"Required context {context!r} has no emitting workflow on pull_request"
+
+        # Check if at least one emitter is unfiltered, or if emitters have complementary stubs
+        unfiltered_emitters = [
+            wf for wf, trigger in emitters if not trigger.get("paths") and not trigger.get("paths-ignore")
+        ]
+        has_stub = any("stub" in wf for wf, _ in emitters)
+
+        assert unfiltered_emitters or has_stub, (
+            f"Required context {context!r} is only emitted by path-filtered workflows {[wf for wf, _ in emitters]} "
+            f"without an unfiltered trigger or companion stub workflow. Every PR outside the path filter will "
+            f"be permanently wedged waiting for {context!r}. See docs/operations/merge-queue.md step 0."
+        )
