@@ -274,6 +274,7 @@ class ApprovalQueue:
         reason: str = "",
         nonce: bytes | str | None = None,
         source: str = "human",
+        channel: str | None = None,
     ) -> ResolvedApproval:
         """Record an operator decision for *approval_id*.
 
@@ -353,6 +354,7 @@ class ApprovalQueue:
             decision=decision,
             reason=reason,
             source=source,
+            channel=channel,
         )
 
         # Signal any awaiting wait_for(). Event.set() is thread-safe but
@@ -586,6 +588,7 @@ def _record_human_approval_decision(
     decision: ApprovalDecision,
     reason: str = "",
     source: str = "human",
+    channel: str | None = None,
 ) -> None:
     """Record a human/operator approval resolution and any promotion to the audit chain.
 
@@ -609,6 +612,10 @@ def _record_human_approval_decision(
         "tool": approval.tool_name,
         "reason": reason,
         "decision_source": source,
+        # An unnamed surface is recorded as unknown rather than defaulted to a
+        # plausible one: an audit entry that guesses where a decision came from
+        # is worse than one that says it does not know.
+        "channel": channel or "unspecified",
         "session_id": approval.session_id,
         "agent_role": approval.agent_role,
     }
