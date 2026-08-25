@@ -150,7 +150,7 @@ def list_approvals() -> ListApprovalsResponse:
     """List all pending approval requests across task-review and pre-spawn gates."""
     results: list[PendingApproval] = []
 
-    # 1. Task-level review pendings (.sdd/runtime/pending_approvals/*.json)
+    # 1. Task-level review pending entries (.sdd/runtime/pending_approvals/*.json)
     pending_dir = _pending_dir()
     if pending_dir.exists():
         for fpath in sorted(pending_dir.glob("*.json")):
@@ -161,7 +161,7 @@ def list_approvals() -> ListApprovalsResponse:
                 approval.resolution_endpoint = f"/approvals/{approval.task_id}/approve"
                 results.append(approval)
 
-    # 2. Pre-spawn gate pendings (.sdd/runtime/approvals/*.pending)
+    # 2. Pre-spawn gate pending entries (.sdd/runtime/approvals/*.pending)
     approvals_dir = _approvals_dir()
     if approvals_dir.exists():
         for sentinel in sorted(approvals_dir.glob("*.pending")):

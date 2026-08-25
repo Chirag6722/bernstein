@@ -1,7 +1,7 @@
 """Unit tests for approvals route (issue #4535).
 
-Verifies that GET /approvals returns both task-review pendings and
-pre-spawn approval-spec pendings, tagged with mechanism and resolution details.
+Verifies that GET /approvals returns both task-review pending entries and
+pre-spawn approval-spec pending entries, tagged with mechanism and resolution details.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _create_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
-def test_task_level_pendings_keep_their_existing_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_task_level_pending_entries_keep_their_existing_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client = _create_app(tmp_path, monkeypatch)
 
     pending_dir = tmp_path / ".sdd" / "runtime" / "pending_approvals"
