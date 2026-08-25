@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import uuid
 from pathlib import Path
@@ -82,8 +83,8 @@ _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 # attributed diff. Attribution inputs/outputs are logged on every verdict so
 # a future misattribution is a log read, not a proof-archive autopsy.
 
-# Task types and roles that legitimately produce no diff (research/exploration output
-# lives in task notes, not the repo; planning tasks produce subtasks). Everything else must show work.
+# Task types that legitimately produce no diff (research/exploration output
+# lives in task notes, not the repo). Everything else must show work.
 #
 # TaskType.UPGRADE_PROPOSAL is included because verify_upgrade_task() (see
 # the UPGRADE_PROPOSAL branch above) is the real pass/fail authority for
@@ -92,24 +93,6 @@ _JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 # the generic empty-diff guard would still hard-reject an already-verified
 # upgrade proposal.
 _NOOP_TASK_TYPES = frozenset({TaskType.RESEARCH, TaskType.UPGRADE_PROPOSAL})
-_PLANNING_ROLES = frozenset({"manager", "architect", "visionary", "vp", "analyst"})
-
-
-def _is_planning_or_non_code_task(task: Task) -> bool:
-    """True when a task legitimately produces no repository code commits.
-
-    Planning roles (manager, architect, visionary, etc.), exploration task types
-    (research, upgrade proposals), and tasks declaring non-code artifact kinds
-    (report, finding, dataset, etc.) produce ledger output or posted artifacts
-    rather than git commits.
-    """
-    if task.task_type in _NOOP_TASK_TYPES:
-        return True
-    if str(getattr(task, "role", "")).lower() in _PLANNING_ROLES:
-        return True
-    artifact_kind = getattr(getattr(task, "artifact_spec", None), "kind", None)
-    return artifact_kind is not None and str(artifact_kind) not in ("code_diff", "ArtifactKind.CODE_DIFF")
-
 
 _ATTRIBUTION_MAX_COMMITS = 50
 
@@ -148,6 +131,17 @@ ARTIFACT_SIGNAL_TYPES = frozenset({"schema_valid", "criteria_match", "hash_stabl
 
 #: Back-compat alias for the module-private spelling.
 _ARTIFACT_SIGNAL_TYPES = ARTIFACT_SIGNAL_TYPES
+
+
+def _decomposed_children(task: Task, tasks: list[Task]) -> list[str]:
+    """Ids of tasks in this pass naming ``task`` as their ``parent_task_id``.
+
+    A planning task's artefact is the task graph it produced, not a commit, so
+    an empty attributable diff is its *normal* shape. The children are that
+    artefact, and they are evidence in the same sense a changed file is: a
+    planner that decomposed nothing still has none, and still fails (#4562).
+    """
+    return [t.id for t in tasks if t.parent_task_id == task.id]
 
 
 def _has_nontrivial_passing_signal(task: Task, signal_results: list[tuple[str, bool, str]]) -> bool:
@@ -320,6 +314,7 @@ def evaluate_signal(
             )
         case "test_passes":
             command = _resolve_branch_check_command(signal.value, workdir)
+            command = _resolve_test_path_command(command, workdir)
             ok = _check_test_passes(command, workdir)
             return ok, "exit 0" if ok else "non-zero exit"
         case "file_contains":
@@ -503,20 +498,6 @@ def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
             if detail:
                 desc = f"{desc} ({detail})"
             failed.append(desc)
-
-    # Empty signals guard (issue #4560): an execution task declaring zero
-    # completion signals must NOT pass unconditionally when it produced no
-    # attributed commits or work.
-    if not task.completion_signals and not _is_planning_or_non_code_task(task):
-        if _is_git_repo(workdir):
-            attributed_commits, attributed_files, reason = _attribute_task_work(task, workdir)
-            if not attributed_commits and not attributed_files:
-                failed.append(
-                    f"empty task work: no completion signals declared and zero attributed commits/files ({reason})"
-                )
-        else:
-            failed.append("empty task work: no completion signals declared")
-
     all_passed = len(failed) == 0
     return all_passed, failed
 
@@ -988,7 +969,14 @@ async def run_janitor(
         )
     results: list[JanitorResult] = []
     for task in tasks:
-        if not task.completion_signals and lineage_gate_result is None and _is_planning_or_non_code_task(task):
+        # A task with no signals used to be dropped here, which made the
+        # empty-diff guard below unreachable for the case its own comment
+        # names: a crash-recovery orphan auto-completion is precisely a task
+        # nobody attached signals to, so it was recorded done with no evidence
+        # and produced no JanitorResult at all -- neither accepted nor
+        # rejected (#4562). Skip only when nothing whatsoever can be checked:
+        # no signals, no lineage gate, and no git repo to attribute work in.
+        if not task.completion_signals and lineage_gate_result is None and not _attribution_possible:
             continue
 
         judge_verdict: JudgeVerdict | None = None
@@ -1026,7 +1014,7 @@ async def run_janitor(
                 attributed_files,
                 attribution_reason,
             )
-            if not attributed_files and not _is_planning_or_non_code_task(task):
+            if not attributed_files and task.task_type not in _NOOP_TASK_TYPES:
                 # An empty attributable diff normally means a 0-file
                 # rubber-stamp or a crash-recovery orphan auto-completion and
                 # must be rejected. BUT a task can legitimately land real work
@@ -1038,8 +1026,24 @@ async def run_janitor(
                 # test_passes / file_contains / llm_review / llm_judge). When
                 # such proof exists and all signals passed, downgrade to a
                 # warn-and-flag for review instead of failing the task.
+                decomposed = _decomposed_children(task, tasks)
                 has_nontrivial_pass = all_passed and _has_nontrivial_passing_signal(task, signal_results)
-                if has_nontrivial_pass:
+                if decomposed:
+                    # A planning task produced a task graph rather than a diff.
+                    # Accept on that evidence, and record which children it is
+                    # standing on so the acceptance is auditable rather than a
+                    # blanket exemption by task type.
+                    decomposed_detail = (
+                        f"no diff, but decomposed {len(decomposed)} task(s): {', '.join(sorted(decomposed))}"
+                    )
+                    signal_results.append(("attribution:decomposed_children", True, decomposed_detail))
+                    logger.info(
+                        "janitor ACCEPT (decomposition): task=%s children=%s -- no changed files, "
+                        "but the task graph it produced is its artefact",
+                        task.id,
+                        sorted(decomposed),
+                    )
+                elif has_nontrivial_pass:
                     warn_detail = f"empty diff but non-trivial completion signals passed: {attribution_reason}"
                     signal_results.append(("attribution:empty_diff_warn", True, warn_detail))
                     logger.warning(
@@ -1060,16 +1064,13 @@ async def run_janitor(
                     logger.warning(
                         "janitor REJECT (empty diff): task=%s task_type=%s -- no changed files "
                         "attributable to this task (attribution: %s); a task with zero changed "
-                        "files must not be accepted unless it is a planning role or non-code task "
+                        "files must not be accepted unless it is an explicit no-op task type %s "
                         "or it has a non-trivial passing completion signal",
                         task.id,
                         task.task_type.value,
                         attribution_reason,
+                        sorted(t.value for t in _NOOP_TASK_TYPES),
                     )
-        elif not task.completion_signals and not _is_planning_or_non_code_task(task):
-            all_passed = False
-            signal_results.append(("signals:empty", False, "no completion signals declared on execution task"))
-            failed_descs.append("signals:empty: no completion signals declared on execution task")
 
         diff = _get_git_diff(task, workdir, attributed_commits=attributed_commits)
         guardrail_results: list[GuardrailResult] = run_guardrails(
@@ -2039,6 +2040,80 @@ def _resolve_branch_check_command(command: str, workdir: Path) -> str:
         branches,
     )
     return command
+
+
+def _resolve_test_path_command(command: str, workdir: Path) -> str:
+    """Rewrite a ``test_passes`` command onto the test files that actually exist.
+
+    A completion signal names its test by path, and that path is written by
+    whoever planned the task rather than read off the tree. When the two
+    disagree -- the plan mirrors the ``src`` layout
+    (``tests/unit/core/security/test_policy.py``) while the suite is flatter
+    (``tests/unit/test_policy.py``) -- pytest exits during collection without
+    running anything, and the janitor reads that exit as the agent's work
+    being wrong. The agent is then rejected over a path it never chose.
+
+    Only an unambiguous rename is followed: exactly one file with that
+    basename beneath the declared root. No match means the test genuinely is
+    not there -- the agent was asked to write it and did not -- and several
+    matches mean the janitor cannot tell which one was meant. Both keep the
+    original token, so the command still fails, honestly.
+
+    Args:
+        command: The ``test_passes`` shell command, after branch resolution.
+        workdir: Project root the command will run in.
+
+    Returns:
+        The original command, or the same command with every uniquely
+        resolvable missing test path replaced by the path that does exist.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unbalanced quotes: not the janitor's to repair. Run it verbatim.
+        return command
+
+    resolved_command = command
+    for token in tokens:
+        if token.startswith("-"):
+            continue
+        # ``path::node_id`` selects one test inside a file; only the path half
+        # is a filesystem claim, and the node id must survive the rewrite.
+        declared = token.split("::", 1)[0]
+        if not declared.endswith(".py") or (workdir / declared).exists():
+            continue
+        parts = Path(declared).parts
+        # Search only under the declared top-level directory (``tests``), never
+        # from the project root: a bare or dot-relative filename would walk the
+        # virtualenv and could match a file in an installed package.
+        if len(parts) < 2 or parts[0] in (".", "..") or Path(declared).is_absolute():
+            continue
+        root = workdir / parts[0]
+        if not root.is_dir():
+            continue
+        matches = sorted(p for p in root.rglob(Path(declared).name) if p.is_file())
+        if len(matches) != 1:
+            logger.info(
+                "janitor acceptance check: test path %r is absent from %s and "
+                "%d files share its name - verdict: will FAIL, running the "
+                "original command for an honest error",
+                declared,
+                workdir,
+                len(matches),
+            )
+            continue
+        actual = matches[0].relative_to(workdir).as_posix()
+        logger.info(
+            "janitor acceptance check: test path %r is absent from %s but %r "
+            "is the only file with that name - verdict: rewriting the command "
+            "onto it (the completion signal mirrors the src layout; the suite "
+            "does not)",
+            declared,
+            workdir,
+            actual,
+        )
+        resolved_command = resolved_command.replace(declared, actual)
+    return resolved_command
 
 
 def _check_test_passes(command: str, workdir: Path) -> bool:
