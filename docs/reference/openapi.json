@@ -159,6 +159,7 @@
               "application/json": {
                 "schema": {
                   "items": {
+                    "additionalProperties": true,
                     "type": "object"
                   },
                   "type": "array",
@@ -2177,6 +2178,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Task Graph Neighbors Tasks  Task Id  Graph Neighbors Get"
                 }
               }
@@ -2687,6 +2689,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Claim Receipt Tasks Claim Receipt Post"
                 }
@@ -3636,6 +3639,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response A2A V0 Accept Task A2A V0 Tasks Post"
                 }
@@ -5021,6 +5025,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Agents Observability Agents Get"
                 }
@@ -5041,6 +5046,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Effectiveness Observability Effectiveness Get"
                 }
@@ -5061,6 +5067,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Recommendations Observability Recommendations Get"
                 }
@@ -5081,6 +5088,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Budget Observability Budget Get"
                 }
@@ -5101,6 +5109,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Deps Observability Deps Get"
                 }
@@ -5121,6 +5130,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Recap Recap Get"
                 }
@@ -5141,6 +5151,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Token Histogram Observability Token Histogram Get"
                 }
@@ -5174,6 +5185,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Queue Depth Observability Queue Depth Get"
                 }
               }
@@ -5203,6 +5215,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Get Timeline Observability Timeline Get"
                 }
@@ -5236,6 +5249,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Changelog Changelog Get"
                 }
               }
@@ -5265,6 +5279,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response List Incidents Observability Incidents Get"
                 }
@@ -5317,6 +5332,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Incident Timeline Observability Incident Timeline  Incident Id  Get"
                 }
               }
@@ -5346,6 +5362,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Token Breakdown Observability Token Breakdown Get"
                 }
@@ -5509,6 +5526,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Fleet Projects Fleet Projects Get"
                 }
@@ -5556,6 +5574,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Fleet Search Fleet Search Get"
                 }
               }
@@ -6388,7 +6407,8 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": true
                   },
                   "title": "Response List Plans Plans Get"
                 }
@@ -6440,6 +6460,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Plan Plans  Plan Id  Get"
                 }
               }
@@ -6504,6 +6525,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Approve Plan Plans  Plan Id  Approve Post"
                 }
               }
@@ -6571,6 +6593,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Reject Plan Plans  Plan Id  Reject Post"
                 }
               }
@@ -7433,6 +7456,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Query Audit Log Audit Get"
                 }
               }
@@ -7465,6 +7489,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Audit Verify Audit Verify Get"
                 }
@@ -7503,6 +7528,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Audit Reverify Audit Verify Post"
                 }
@@ -7620,6 +7646,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Graphql Endpoint Graphql Post"
                 }
@@ -8891,6 +8918,7 @@
               "application/json": {
                 "schema": {
                   "items": {
+                    "additionalProperties": true,
                     "type": "object"
                   },
                   "type": "array",
@@ -10909,6 +10937,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Task Graph Neighbors Api V1 Tasks  Task Id  Graph Neighbors Get"
                 }
               }
@@ -11419,6 +11448,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Claim Receipt Api V1 Tasks Claim Receipt Post"
                 }
@@ -12368,6 +12398,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response A2A V0 Accept Task Api V1 A2A V0 Tasks Post"
                 }
@@ -13753,6 +13784,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Agents Api V1 Observability Agents Get"
                 }
@@ -13773,6 +13805,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Effectiveness Api V1 Observability Effectiveness Get"
                 }
@@ -13793,6 +13826,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Recommendations Api V1 Observability Recommendations Get"
                 }
@@ -13813,6 +13847,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Budget Api V1 Observability Budget Get"
                 }
@@ -13833,6 +13868,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Observability Deps Api V1 Observability Deps Get"
                 }
@@ -13853,6 +13889,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Recap Api V1 Recap Get"
                 }
@@ -13873,6 +13910,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Token Histogram Api V1 Observability Token Histogram Get"
                 }
@@ -13906,6 +13944,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Queue Depth Api V1 Observability Queue Depth Get"
                 }
               }
@@ -13935,6 +13974,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Get Timeline Api V1 Observability Timeline Get"
                 }
@@ -13968,6 +14008,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Changelog Api V1 Changelog Get"
                 }
               }
@@ -13997,6 +14038,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response List Incidents Api V1 Observability Incidents Get"
                 }
@@ -14049,6 +14091,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Incident Timeline Api V1 Observability Incident Timeline  Incident Id  Get"
                 }
               }
@@ -14078,6 +14121,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Token Breakdown Api V1 Observability Token Breakdown Get"
                 }
@@ -14241,6 +14285,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Fleet Projects Api V1 Fleet Projects Get"
                 }
@@ -14288,6 +14333,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Fleet Search Api V1 Fleet Search Get"
                 }
               }
@@ -15120,7 +15166,8 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": true
                   },
                   "title": "Response List Plans Api V1 Plans Get"
                 }
@@ -15172,6 +15219,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Plan Api V1 Plans  Plan Id  Get"
                 }
               }
@@ -15236,6 +15284,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Approve Plan Api V1 Plans  Plan Id  Approve Post"
                 }
               }
@@ -15303,6 +15352,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Reject Plan Api V1 Plans  Plan Id  Reject Post"
                 }
               }
@@ -16165,6 +16215,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Query Audit Log Api V1 Audit Get"
                 }
               }
@@ -16197,6 +16248,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Audit Verify Api V1 Audit Verify Get"
                 }
@@ -16235,6 +16287,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Audit Reverify Api V1 Audit Verify Post"
                 }
@@ -16352,6 +16405,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Graphql Endpoint Api V1 Graphql Post"
                 }
@@ -17765,6 +17819,7 @@
           "receipt": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -17823,6 +17878,7 @@
             "title": "Description"
           },
           "input_schema": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Input Schema"
           }
@@ -18711,6 +18767,7 @@
         "properties": {
           "receipts": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -19247,6 +19304,7 @@
           "variables": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -19411,6 +19469,7 @@
           },
           "components": {
             "additionalProperties": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "object",
@@ -20030,6 +20089,7 @@
             "title": "Tool Name"
           },
           "tool_args": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Tool Args"
           },
@@ -20459,6 +20519,7 @@
           "content": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -20539,6 +20600,7 @@
             "default": ""
           },
           "sarif_result": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Sarif Result"
           },
@@ -20616,6 +20678,7 @@
           "payload": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -20880,6 +20943,7 @@
           "upgrade_details": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -20940,6 +21004,7 @@
           "slack_context": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -20949,6 +21014,7 @@
             "title": "Slack Context"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
           },
@@ -21074,6 +21140,7 @@
           "artifact_spec": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -21106,6 +21173,7 @@
           },
           "progress_entries": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -21118,6 +21186,7 @@
           },
           "artifacts": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -21126,6 +21195,7 @@
           "progress": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -21716,6 +21786,7 @@
           "upgrade_details": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -21775,6 +21846,7 @@
           "slack_context": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -21784,6 +21856,7 @@
             "title": "Slack Context"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
           },
@@ -21916,6 +21989,7 @@
           "artifact_spec": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -22275,6 +22349,7 @@
             "default": ""
           },
           "payload": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Payload"
           }
@@ -22426,6 +22501,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
@@ -22607,6 +22689,7 @@
           "upgrade_details": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -22667,6 +22750,7 @@
           "slack_context": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -22676,6 +22760,7 @@
             "title": "Slack Context"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
           },
@@ -22801,6 +22886,7 @@
           "artifact_spec": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -22826,6 +22912,7 @@
           "receipt": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
