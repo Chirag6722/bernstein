@@ -589,8 +589,16 @@ def _record_human_approval_decision(
 ) -> None:
     """Record a human/operator approval resolution and any promotion to the audit chain.
 
-    The audit recording is performed best-effort and fail-closed against exceptions
-    so filesystem/permission errors in the audit layer do not corrupt the queue state.
+    Persistence is best-effort, matching ``auto_approve_decision`` in
+    ``gate.py``: a write failure is logged and the resolution still stands,
+    because refusing to resolve an approval because its audit line could not
+    be appended would wedge the queue on a filesystem fault.
+
+    The payload mirrors that sibling event and records the extracted
+    ``command`` rather than the whole ``tool_args`` mapping. Two events in one
+    chain that disagree on how much of a call they retain is a difference an
+    auditor has to explain, and the mapping can carry argument values that
+    have no reason to live in a replayable log.
     """
     from bernstein.core.security.audit import AuditLog
 
@@ -603,7 +611,6 @@ def _record_human_approval_decision(
         "decision_source": source,
         "session_id": approval.session_id,
         "agent_role": approval.agent_role,
-        "tool_args": approval.tool_args,
     }
     if cmd:
         details["command"] = cmd
@@ -625,7 +632,6 @@ def _record_human_approval_decision(
                 details={
                     "approval_id": approval.id,
                     "tool": approval.tool_name,
-                    "tool_args": approval.tool_args,
                     "session_id": approval.session_id,
                     "agent_role": approval.agent_role,
                     "promoted_by": source,
