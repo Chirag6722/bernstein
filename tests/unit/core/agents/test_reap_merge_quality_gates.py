@@ -101,13 +101,6 @@ def test_blocking_quality_gate_failure_refuses_merge(tmp_path: Path) -> None:
         root: Path,
         config: QualityGatesConfig,
     ) -> QualityGatesResult:
-        gates_dir = root / ".sdd" / "runtime" / "gates"
-        gates_dir.mkdir(parents=True, exist_ok=True)
-        report_file = gates_dir / f"{task.id}.json"
-        report_file.write_text(
-            json.dumps({"task_id": task.id, "passed": False, "gate_results": []}),
-            encoding="utf-8",
-        )
         return QualityGatesResult(
             task_id=task.id,
             passed=False,
@@ -139,9 +132,6 @@ def test_blocking_quality_gate_failure_refuses_merge(tmp_path: Path) -> None:
         assert "quality gates blocked merge for task task-200: quality_gate:lint" in result.error
         # Merge function was NEVER called because gate blocked it
         assert merge_called == []
-        # Gate verdict was still written before refusing
-        verdict_path = workdir / ".sdd" / "runtime" / "gates" / "task-200.json"
-        assert verdict_path.exists()
 
 
 def test_disabled_quality_gates_skips_refusal(tmp_path: Path) -> None:
@@ -158,3 +148,32 @@ def test_disabled_quality_gates_skips_refusal(tmp_path: Path) -> None:
         quality_gate_config=qg_config,
     )
     assert refusal is None
+
+
+def test_reap_merge_refuses_when_quality_gate_raises_exception(tmp_path: Path) -> None:
+    """When run_quality_gates crashes/raises, merge must be refused with quality-gates-errored."""
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    session = _make_session(session_id="sess-err", task_id="task-err")
+    qg_config = QualityGatesConfig(enabled=True)
+
+    with patch(
+        "bernstein.core.quality.quality_gates.run_quality_gates", side_effect=RuntimeError("Subprocess timeout")
+    ):
+        refusal = _quality_gate_refusal(
+            session,
+            workdir,
+            "agent/sess-err",
+            quality_gate_config=qg_config,
+        )
+
+    assert refusal is not None
+    assert refusal.success is False
+    assert "refused: quality gates execution errored for task task-err" in (refusal.error or "")
+    assert "Subprocess timeout" in (refusal.error or "")
+
+    # Verify refusal marker in refused_merges.jsonl
+    refusals_file = workdir / ".sdd" / "runtime" / "refused_merges.jsonl"
+    assert refusals_file.exists()
+    refusals_content = refusals_file.read_text(encoding="utf-8")
+    assert "quality-gates-errored" in refusals_content

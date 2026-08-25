@@ -414,8 +414,8 @@ def _quality_gate_refusal(
     """Run quality gates on the agent's worktree before merging into base branch (#4393).
 
     If quality gates are enabled, runs all configured gates on the still-alive
-    worktree and writes the report to `.sdd/runtime/gates/<task_id>.json` before
-    the merge lands. A blocking gate failure leaves the agent branch unmerged.
+    worktree before the merge lands. A blocking gate failure or execution error
+    leaves the agent branch unmerged.
     """
     config = quality_gate_config
     if config is None:
@@ -442,7 +442,13 @@ def _quality_gate_refusal(
             qg_result = run_quality_gates(surrogate_task, run_dir, worktree_root, config)
         except Exception as exc:
             logger.warning("Quality gates execution failed for task %s in %s: %s", task_id, run_dir, exc)
-            continue
+            return _refuse_merge(
+                session,
+                worktree_root,
+                branch,
+                reason=f"refused: quality gates execution errored for task {task_id}: {exc}",
+                code="quality-gates-errored",
+            )
 
         if not qg_result.passed:
             failed_gates = [f"quality_gate:{r.gate}" for r in qg_result.gate_results if r.blocked and not r.passed]
