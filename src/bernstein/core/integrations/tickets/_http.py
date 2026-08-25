@@ -182,11 +182,16 @@ def http_request_json(
                 if exc.code in (429, 503) and attempt < max_retries:
                     retry_after = _parse_retry_after(exc.headers.get("Retry-After"))
                     attempt += 1
-                    wait_s = (
-                        retry_after
-                        if retry_after is not None
-                        else min(max_backoff_s, backoff_base_s * (2 ** (attempt - 1)))
-                    )
+                    # Mirrors the httpx branch exactly: a server-supplied
+                    # Retry-After is honoured but still capped, so a provider
+                    # answering `Retry-After: 3600` cannot park the calling
+                    # thread for an hour, and the un-hinted backoff carries the
+                    # same jitter so two clients retrying together spread out.
+                    if retry_after is not None:
+                        wait_s = min(retry_after, max_backoff_s)
+                    else:
+                        jitter = random.uniform(0, 0.1 * backoff_base_s)
+                        wait_s = min(max_backoff_s, (backoff_base_s * (2 ** (attempt - 1))) + jitter)
                     sleep_fn(wait_s)
                     total_waited_s += wait_s
                     continue

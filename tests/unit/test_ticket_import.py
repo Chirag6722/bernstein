@@ -409,6 +409,110 @@ def test_429_with_retry_after_is_retried_and_succeeds() -> None:
     assert breaker.state.value == "closed"
 
 
+def test_a_huge_retry_after_is_capped_not_obeyed() -> None:
+    """A provider must not be able to park the calling thread.
+
+    ``Retry-After`` is a server-controlled number and this helper sleeps on it
+    synchronously, so honouring it unbounded hands any tracker the ability to
+    block a ticket sync for as long as it likes. The existing coverage uses
+    2.5s, which is under the cap and so passes either way; this pins the cap.
+    """
+    from bernstein.core.integrations.tickets._http import http_get_json
+    from bernstein.core.observability.provider_circuit_breaker import ProviderCircuitBreaker
+
+    slept: list[float] = []
+    calls = 0
+
+    class FakeResponse:
+        def __init__(self, status_code: int, headers: dict[str, str], json_data: dict[str, Any] | None = None):
+            self.status_code = status_code
+            self.headers = headers
+            self._json = json_data or {}
+            self.text = "rate limited"
+
+        def json(self) -> dict[str, Any]:
+            return self._json
+
+    def mock_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return FakeResponse(429, {"Retry-After": "3600"})
+        return FakeResponse(200, {}, {"title": "ok"})
+
+    breaker = ProviderCircuitBreaker("cap-httpx")
+    with patch("httpx.get", side_effect=mock_get):
+        http_get_json(
+            url="https://api.github.com/repos/acme/repo/issues/1",
+            headers={"Authorization": "Bearer tok"},
+            provider_label="GitHub",
+            auth_env_var="GITHUB_TOKEN",
+            circuit_breaker=breaker,
+            max_backoff_s=30.0,
+            sleep_fn=slept.append,
+        )
+
+    assert slept == [30.0], f"Retry-After must be capped at max_backoff_s; slept {slept}"
+
+
+def test_the_urllib_fallback_caps_retry_after_the_same_way() -> None:
+    """The two transports must not disagree about how long they will wait.
+
+    ``http_request_json`` falls back to ``urllib`` when ``httpx`` is absent, and
+    that branch is otherwise uncovered. A response that costs 30s through one
+    transport must not cost an hour through the other.
+    """
+    import sys
+    import urllib.error
+
+    from bernstein.core.integrations.tickets._http import http_get_json
+    from bernstein.core.observability.provider_circuit_breaker import ProviderCircuitBreaker
+
+    slept: list[float] = []
+    calls = 0
+
+    class _Headers(dict[str, str]):
+        pass
+
+    def mock_urlopen(req: Any, timeout: float | None = None) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise urllib.error.HTTPError(
+                "https://api.github.com/x", 429, "Too Many Requests", _Headers({"Retry-After": "3600"}), None
+            )
+
+        class _Handle:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *a: object) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b'{"title": "ok"}'
+
+        return _Handle()
+
+    breaker = ProviderCircuitBreaker("cap-urllib")
+    with (
+        patch.dict(sys.modules, {"httpx": None}),
+        patch("urllib.request.urlopen", side_effect=mock_urlopen),
+    ):
+        http_get_json(
+            url="https://api.github.com/repos/acme/repo/issues/1",
+            headers={"Authorization": "Bearer tok"},
+            provider_label="GitHub",
+            auth_env_var="GITHUB_TOKEN",
+            circuit_breaker=breaker,
+            max_backoff_s=30.0,
+            sleep_fn=slept.append,
+        )
+
+    assert calls == 2
+    assert slept == [30.0], f"urllib fallback must cap Retry-After too; slept {slept}"
+
+
 def test_404_fails_immediately_without_retry() -> None:
     from bernstein.core.integrations.tickets._http import http_get_json
     from bernstein.core.observability.provider_circuit_breaker import ProviderCircuitBreaker
