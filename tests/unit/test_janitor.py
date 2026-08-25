@@ -513,6 +513,23 @@ def _run_git(args: list[str], cwd: Path) -> None:
     assert result.returncode == 0, f"git {args} failed: {result.stderr}"
 
 
+def _init_bare_git_repo(tmp_path: Path) -> Path:
+    """A repo with one commit and nothing since: the shape a worker leaves behind.
+
+    A janitor run in a plain directory cannot attribute work at all, so it
+    skips rather than judges. Fleet workspaces are always checkouts, so a
+    signal-less execution task there is judged on its diff -- and an empty
+    diff is what "the agent recorded done and changed nothing" looks like.
+    """
+    _run_git(["init", "-q"], tmp_path)
+    _run_git(["config", "user.email", "test@example.com"], tmp_path)
+    _run_git(["config", "user.name", "Test"], tmp_path)
+    (tmp_path / "README.md").write_text("seed\n")
+    _run_git(["add", "README.md"], tmp_path)
+    _run_git(["commit", "-q", "-m", "seed"], tmp_path)
+    return tmp_path
+
+
 def _init_git_repo_with_branch(tmp_path: Path, branch_name: str) -> Path:
     """Create a throwaway git repo at *tmp_path* with a commit on *branch_name*."""
     _run_git(["init", "-q"], tmp_path)
@@ -832,7 +849,16 @@ class TestVerifyTask:
         assert passed is True
         assert failed == []
 
-    def test_execution_task_without_signals_or_commits_is_rejected(self, tmp_path: Path) -> None:
+    def test_verify_task_leaves_a_signalless_task_to_the_janitor(self, tmp_path: Path) -> None:
+        """Signals are the only thing this layer can check.
+
+        An execution task that recorded done while changing nothing is still
+        rejected -- but by ``run_janitor``, which is the layer that can read
+        the diff and attribute it. Pinning it here as well would assert the
+        behaviour against a function that has no way to produce it; the
+        rejection is covered by
+        ``TestRunJanitor::test_execution_task_without_signals_in_run_janitor_is_rejected``.
+        """
         task = Task(
             id="T-102",
             title="Fix bug",
@@ -840,10 +866,10 @@ class TestVerifyTask:
             role="backend",
             completion_signals=[],
         )
+        _init_bare_git_repo(tmp_path)
         passed, failed = verify_task(task, tmp_path)
-        assert passed is False
-        assert len(failed) == 1
-        assert "empty task work" in failed[0]
+        assert passed is True
+        assert failed == []
 
     def test_non_code_artifact_spec_without_signals_passes(self, tmp_path: Path) -> None:
         from bernstein.core.tasks.artifacts import ArtifactKind, ArtifactSpec
@@ -924,6 +950,7 @@ class TestRunJanitor:
     @pytest.mark.asyncio
     async def test_execution_task_without_signals_in_run_janitor_is_rejected(self, tmp_path: Path) -> None:
         task = Task(id="T-003", title="QA", description="QA", role="qa", completion_signals=[])
+        _init_bare_git_repo(tmp_path)
         results = await run_janitor([task], tmp_path)
 
         assert len(results) == 1
