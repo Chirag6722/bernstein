@@ -20555,7 +20555,7 @@
           },
           "artifact_type": {
             "type": "string",
-            "pattern": "^(report|table|link)$",
+            "pattern": "^(report|table|link|finding)$",
             "title": "Artifact Type"
           },
           "poster": {
@@ -20597,6 +20597,41 @@
             "type": "string",
             "maxLength": 64,
             "title": "Link Kind",
+            "default": ""
+          },
+          "sarif_result": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Sarif Result"
+          },
+          "tool": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Tool",
+            "default": ""
+          },
+          "tool_version": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Tool Version",
+            "default": ""
+          },
+          "pinned_ruleset_or_feed_digest": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Pinned Ruleset Or Feed Digest",
+            "default": ""
+          },
+          "invocation_argv_hash": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Invocation Argv Hash",
+            "default": ""
+          },
+          "target": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Target",
             "default": ""
           }
         },
