@@ -360,3 +360,173 @@ def test_explicit_role_flag_overrides_inference() -> None:
     payload = build_task_payload(ticket, role="backend", priority="low")
     assert payload["role"] == "backend"
     assert payload["priority"] == 3
+
+
+# ---------------------------------------------------------------------------
+# HTTP helper: retries, rate limits, and circuit breaker (Issue #4534)
+# ---------------------------------------------------------------------------
+
+
+def test_429_with_retry_after_is_retried_and_succeeds() -> None:
+    from bernstein.core.integrations.tickets._http import http_get_json
+    from bernstein.core.observability.provider_circuit_breaker import ProviderCircuitBreaker
+
+    calls = 0
+    slept: list[float] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, headers: dict[str, str], json_data: dict[str, Any] | None = None):
+            self.status_code = status_code
+            self.headers = headers
+            self._json = json_data or {}
+            self.text = "rate limited"
+
+        def json(self) -> dict[str, Any]:
+            return self._json
+
+    def mock_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return FakeResponse(429, {"Retry-After": "2.5"})
+        return FakeResponse(200, {}, {"title": "Issue title"})
+
+    breaker = ProviderCircuitBreaker("test-provider")
+
+    with patch("httpx.get", side_effect=mock_get):
+        data = http_get_json(
+            url="https://api.github.com/repos/acme/repo/issues/1",
+            headers={"Authorization": "Bearer tok"},
+            provider_label="GitHub",
+            auth_env_var="GITHUB_TOKEN",
+            circuit_breaker=breaker,
+            sleep_fn=slept.append,
+        )
+
+    assert calls == 2
+    assert slept == [2.5]
+    assert data["title"] == "Issue title"
+    assert breaker.state.value == "closed"
+
+
+def test_404_fails_immediately_without_retry() -> None:
+    from bernstein.core.integrations.tickets._http import http_get_json
+    from bernstein.core.observability.provider_circuit_breaker import ProviderCircuitBreaker
+
+    slept: list[float] = []
+
+    class FakeResponse:
+        status_code = 404
+        headers: dict[str, str] = {}
+        text = "Not Found"
+
+        def json(self) -> dict[str, Any]:
+            return {}
+
+    breaker = ProviderCircuitBreaker("test-provider")
+
+    with patch("httpx.get", return_value=FakeResponse()):
+        with pytest.raises(TicketParseError) as exc_info:
+            http_get_json(
+                url="https://api.github.com/repos/acme/repo/issues/999",
+                headers={},
+                provider_label="GitHub",
+                auth_env_var="GITHUB_TOKEN",
+                circuit_breaker=breaker,
+                sleep_fn=slept.append,
+            )
+
+    assert "404" in str(exc_info.value)
+    assert len(slept) == 0
+
+
+def test_retry_exhaustion_raises_rate_limited_error_not_parse_error() -> None:
+    from bernstein.core.integrations.tickets import TicketRateLimitError
+    from bernstein.core.integrations.tickets._http import http_get_json
+    from bernstein.core.observability.provider_circuit_breaker import ProviderCircuitBreaker
+
+    calls = 0
+    slept: list[float] = []
+
+    class FakeResponse:
+        status_code = 429
+        headers = {"Retry-After": "1"}
+        text = "Too Many Requests"
+
+        def json(self) -> dict[str, Any]:
+            return {}
+
+    def mock_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        return FakeResponse()
+
+    breaker = ProviderCircuitBreaker("test-provider")
+
+    with patch("httpx.get", side_effect=mock_get):
+        with pytest.raises(TicketRateLimitError) as exc_info:
+            http_get_json(
+                url="https://api.github.com/repos/acme/repo/issues/1",
+                headers={},
+                provider_label="GitHub",
+                auth_env_var="GITHUB_TOKEN",
+                max_retries=2,
+                circuit_breaker=breaker,
+                sleep_fn=slept.append,
+            )
+
+    assert calls == 3  # initial + 2 retries
+    assert len(slept) == 2
+    assert "rate limit exceeded" in str(exc_info.value)
+    assert exc_info.value.provider == "GitHub"
+
+
+def test_repeated_provider_failures_open_the_circuit() -> None:
+    from bernstein.core.integrations.tickets import TicketCircuitOpenError
+    from bernstein.core.integrations.tickets._http import http_get_json
+    from bernstein.core.observability.provider_circuit_breaker import CircuitBreakerConfig, ProviderCircuitBreaker
+
+    class FakeResponse:
+        status_code = 500
+        headers: dict[str, str] = {}
+        text = "Internal Server Error"
+
+        def json(self) -> dict[str, Any]:
+            return {}
+
+    config = CircuitBreakerConfig(failure_threshold=2, recovery_timeout_s=60.0)
+    breaker = ProviderCircuitBreaker("jira", config=config)
+
+    with patch("httpx.get", return_value=FakeResponse()):
+        # Attempt 1 -> Failure
+        with pytest.raises(TicketParseError):
+            http_get_json(
+                url="https://jira.example.com/rest/api/2/issue/1",
+                headers={},
+                provider_label="Jira",
+                auth_env_var="JIRA_API_TOKEN",
+                circuit_breaker=breaker,
+            )
+        assert breaker.state.value == "closed"
+
+        # Attempt 2 -> Failure (hits threshold 2) -> Transitions to OPEN
+        with pytest.raises(TicketParseError):
+            http_get_json(
+                url="https://jira.example.com/rest/api/2/issue/1",
+                headers={},
+                provider_label="Jira",
+                auth_env_var="JIRA_API_TOKEN",
+                circuit_breaker=breaker,
+            )
+        assert breaker.state.value == "open"
+
+        # Attempt 3 -> Immediately rejected by open circuit without HTTP call
+        with pytest.raises(TicketCircuitOpenError) as exc_info:
+            http_get_json(
+                url="https://jira.example.com/rest/api/2/issue/1",
+                headers={},
+                provider_label="Jira",
+                auth_env_var="JIRA_API_TOKEN",
+                circuit_breaker=breaker,
+            )
+        assert "circuit breaker is OPEN" in str(exc_info.value)
