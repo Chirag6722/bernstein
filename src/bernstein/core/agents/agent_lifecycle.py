@@ -2837,6 +2837,23 @@ def reap_dead_agents(
         _hard_cap_s = 5400  # 90 minutes absolute maximum
         if runtime > timeout_s and _time_since_heartbeat < 120 and timeout_s < _hard_cap_s:
             session.timeout_s = min(timeout_s + 600, _hard_cap_s)
+            # #4571: the extension must reach the process watchdog, which was
+            # armed once at spawn with the original scalar. Re-arm it with the
+            # REMAINING budget (timeout_s counts from spawn_ts, but the timer
+            # counts from now), so the watchdog still fires at spawn + timeout_s
+            # rather than drift past the absolute cap. A missed re-arm leaves the
+            # original timer in place, so the agent is still killed at the old
+            # deadline - never left unguarded.
+            if session.timeout_timer is not None and session.pid is not None:
+                _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
+                if _adapter is not None and hasattr(_adapter, "extend_timeout"):
+                    _remaining = max(60, int(session.timeout_s - runtime))
+                    session.timeout_timer = _adapter.extend_timeout(
+                        session.timeout_timer,
+                        session.pid,
+                        _remaining,
+                        session.id,
+                    )
             logger.info(
                 "Agent %s exceeded %.0fs timeout but heartbeated %.0fs ago - extending to %.0fs",
                 session.id,
