@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from bernstein.core.volunteer.registry import (
     HTTPResponse,
     browse_indexes,
@@ -51,6 +53,11 @@ NO_LOCAL_MANIFEST = json.dumps(
         "local_ok": False,
     }
 ).encode()
+
+
+def _resolves_to(*addresses: str):
+    """A resolver that answers with fixed addresses, so no DNS is needed."""
+    return lambda _host: list(addresses)
 
 
 class _FakeTransport:
@@ -202,3 +209,320 @@ def test_a_non_https_index_url_is_refused() -> None:
     assert transport.call_count == 0
     assert len(dropped) == 1
     assert "URL scheme" in dropped[0].reason or "rejected" in dropped[0].reason
+
+
+def test_browse_rejects_internal_index_url() -> None:
+    """browse_indexes must reject index URLs that resolve to internal addresses."""
+    from bernstein.core.volunteer.registry import _UrllibTransport
+
+    transport = _UrllibTransport()
+
+    joinable, dropped = browse_indexes(
+        ["https://127.0.0.1/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert "internal address" in dropped[0].reason or "rejected" in dropped[0].reason
+
+
+def test_browse_rejects_internal_manifest_url() -> None:
+    """browse_indexes must reject manifest URLs pointing to internal addresses."""
+    transport = _FakeTransport()
+    repo = "https://github.com/foo/bar"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+    transport.responses["https://github.com/foo/bar/raw/main/.bernstein/volunteer.json"] = HTTPResponse(
+        status=404, body=b"", etag=None
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "404" in dropped[0].reason
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "127.0.0.1",
+        "::1",
+        "169.254.169.254",
+        "10.0.0.5",
+        "192.168.1.100",
+        "fe80::1",
+        "fc00::1",
+    ],
+)
+def test_browse_rejects_index_with_internal_repo_url(monkeypatch: pytest.MonkeyPatch, internal_ip: str) -> None:
+    """browse_indexes must reject repo_urls that resolve to internal addresses."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "internal.example":
+            return [internal_ip]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://internal.example/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "127.0.0.1",
+        "::1",
+        "169.254.169.254",
+    ],
+)
+def test_browse_rejects_rebinding_repo_url(monkeypatch: pytest.MonkeyPatch, internal_ip: str) -> None:
+    """browse_indexes must reject repo_urls that resolve to mixed public+internal addresses."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "rebind.example":
+            return ["93.184.216.34", internal_ip]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://rebind.example/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
+
+
+def test_browse_rejects_internal_index_url_via_resolver() -> None:
+    """browse_indexes must reject index URLs pointing to internal addresses."""
+    from bernstein.core.volunteer.registry import _UrllibTransport
+
+    transport = _UrllibTransport()
+
+    joinable, dropped = browse_indexes(
+        ["https://127.0.0.1/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert "internal address" in dropped[0].reason
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "10.0.0.5",
+        "172.16.0.100",
+        "192.168.1.1",
+        "fe80::1",
+        "fc00::1",
+    ],
+)
+def test_browse_rejects_index_with_internal_repo_various_ranges(
+    monkeypatch: pytest.MonkeyPatch, internal_ip: str
+) -> None:
+    """browse_indexes must reject various internal IP ranges in repo URLs."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "private.repo":
+            return [internal_ip]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://private.repo/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "127.0.0.1",
+        "::1",
+        "169.254.169.254",
+        "10.0.0.5",
+        "192.168.1.100",
+        "fe80::1",
+        "fc00::1",
+    ],
+)
+def test_browse_rejects_internal_manifest_url_via_repo(monkeypatch: pytest.MonkeyPatch, internal_ip: str) -> None:
+    """browse_indexes must reject manifest URLs when repo resolves to internal address."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "internal.example":
+            return [internal_ip]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://internal.example/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
+
+
+def test_browse_rejects_internal_manifest_url_ipv6_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """browse_indexes must reject IPv6 loopback in manifest URL."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "localhost6.example":
+            return ["::1"]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://localhost6.example/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
+
+
+def test_browse_rejects_rebinding_manifest_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """browse_indexes must reject manifest URLs with mixed public+internal addresses."""
+
+    def resolver(host: str) -> list[str]:
+        if host == "rebind.example":
+            return ["93.184.216.34", "127.0.0.1"]
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(
+        "bernstein.core.security.url_allowlist._default_resolver",
+        resolver,
+    )
+
+    transport = _FakeTransport()
+    repo = "https://rebind.example/repo"
+
+    transport.responses["https://index.test/index.json"] = HTTPResponse(
+        status=200,
+        body=_make_index(
+            [{"repo_url": repo, "default_branch": "main", "topics": [], "license": "MIT", "local_ok": True}]
+        ),
+        etag=None,
+    )
+
+    joinable, dropped = browse_indexes(
+        ["https://index.test/index.json"],
+        transport=transport,
+    )
+
+    assert len(joinable) == 0
+    assert len(dropped) == 1
+    assert dropped[0].repo_url == repo
+    assert "internal address" in dropped[0].reason
