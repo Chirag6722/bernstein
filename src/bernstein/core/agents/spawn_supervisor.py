@@ -633,7 +633,39 @@ class SpawnSupervisor:
             last_error or "<none>",
         )
         self._persist()
+        self._write_failure_record(session_id, attempts, last_error, budget)
         self._publish_exhausted(session_id, attempts, last_error, budget)
+
+    def _write_failure_record(
+        self,
+        session_id: str,
+        attempts: int,
+        last_error: str,
+        budget: RespawnBudget,
+    ) -> None:
+        """Persist a structured failure record into ``.sdd/runtime/failures/``."""
+        if self._workdir is None:
+            return
+        failures_dir = self._workdir / ".sdd" / "runtime" / "failures"
+        try:
+            failures_dir.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%dT%H%M%S")
+            path = failures_dir / f"spawn-exhausted-{ts}-{session_id}.json"
+            record = {
+                "kind": "respawn_exhausted",
+                "session_id": session_id,
+                "reason": PARK_REASON_EXHAUSTED,
+                "last_error": last_error,
+                "attempts": attempts,
+                "window_seconds": budget.window_seconds,
+                "max_respawns": budget.max_respawns,
+                "detected_at": time.time(),
+            }
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(record, indent=2), encoding="utf-8")
+            os.replace(str(tmp), str(path))
+        except OSError:
+            logger.warning("Could not persist spawn failure record for '%s'", session_id, exc_info=True)
 
     def _publish_exhausted(
         self,
