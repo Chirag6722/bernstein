@@ -106,13 +106,15 @@ def test_delete_active_session_branch_is_preserved(tmp_path: Path) -> None:
 
 
 def test_force_unmerged_true_deletes_unmerged_branch(tmp_path: Path) -> None:
-    """The privileged ``force_unmerged`` opt-in uses ``branch -D``."""
+    """The privileged ``force_unmerged`` opt-in rescues unmerged work and uses ``branch -D`` (#4677)."""
     with patch(
         "bernstein.core.git_hygiene.run_git",
         side_effect=[
             GitResult(0, "agent/unmerged\n", ""),
             # ancestry probe -> not merged
             GitResult(1, "", ""),
+            # rescue ref update
+            GitResult(0, "", ""),
             # forced delete
             GitResult(0, "", ""),
         ],
@@ -121,7 +123,9 @@ def test_force_unmerged_true_deletes_unmerged_branch(tmp_path: Path) -> None:
 
     assert deleted == 1
     assert skipped == 0
-    assert mock_run_git.call_args_list[2].args[0] == ["branch", "-D", "agent/unmerged"]
+    assert mock_run_git.call_args_list[2].args[0][0] == "update-ref"
+    assert mock_run_git.call_args_list[2].args[0][1].startswith("refs/rescue/")
+    assert mock_run_git.call_args_list[3].args[0] == ["branch", "-D", "agent/unmerged"]
 
 
 def test_delete_mix_of_branches(tmp_path: Path) -> None:
