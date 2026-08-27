@@ -14,9 +14,12 @@ import time
 from pathlib import Path
 
 from bernstein.core.persistence.runs_report import (
+    FailurePatternDraft,
+    FinishedRun,
     RunOutcome,
     RunWrapUp,
     classify_run,
+    detect_failure_patterns,
     list_finished_runs,
 )
 from bernstein.core.persistence.work_ledger import (
@@ -195,3 +198,145 @@ class TestListFinishedRuns:
         (ledger_root / "not-a-run.txt").write_text("noise", encoding="utf-8")
         runs = list_finished_runs(tmp_path / ".sdd")
         assert [r.run_id for r in runs] == ["run-good"]
+
+
+class TestDetectFailurePatterns:
+    """Tests for :func:`detect_failure_patterns`."""
+
+    def test_excludes_non_failure_outcomes(self) -> None:
+        """PR_OPENED and NO_CHANGES runs are not failure patterns."""
+        runs = [
+            FinishedRun("run-pr", "fix/a", RunOutcome.PR_OPENED, "fix/a (PR #1)", 1000.0),
+            FinishedRun("run-nochange", "main", RunOutcome.NO_CHANGES, "0 commits over base", 1010.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert drafts == []
+
+    def test_groups_identical_gate_failures(self) -> None:
+        """Same gate failure evidence creates one pattern with occurrence count."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff check", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.GATE_FAILED, "lint: ruff check", 1010.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert len(drafts) == 1
+        assert drafts[0].occurrence_count == 2
+        assert "run-1" in drafts[0].contributing_run_ids
+        assert "run-2" in drafts[0].contributing_run_ids
+
+    def test_different_evidence_creates_separate_patterns(self) -> None:
+        """Different evidence strings produce different fingerprints."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff check", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.GATE_FAILED, "tests: pytest", 1010.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert len(drafts) == 2
+        assert drafts[0].fingerprint != drafts[1].fingerprint
+        assert {d.occurrence_count for d in drafts} == {1}
+
+    def test_groups_infra_errors_by_evidence(self) -> None:
+        """Infrastructure errors are grouped by their error message."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.INFRA_ERROR, "adapter: oom", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.INFRA_ERROR, "adapter: oom", 1010.0),
+            FinishedRun("run-3", "fix/c", RunOutcome.INFRA_ERROR, "transport: timeout", 1020.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert len(drafts) == 2
+        assert sorted([d.occurrence_count for d in drafts]) == [1, 2]
+
+    def test_groups_wedged_tasks(self) -> None:
+        """Wedged tasks with same task list create one pattern."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.WEDGED, "2 unspawnable task(s): t1, t2", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.WEDGED, "2 unspawnable task(s): t1, t2", 1010.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert len(drafts) == 1
+        assert drafts[0].occurrence_count == 2
+
+    def test_most_recent_run_id_is_latest_by_timestamp(self) -> None:
+        """most_recent_run_id should point to the run with highest started_at."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.GATE_FAILED, "lint: ruff", 1020.0),
+            FinishedRun("run-3", "fix/c", RunOutcome.GATE_FAILED, "lint: ruff", 1010.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert len(drafts) == 1
+        assert drafts[0].most_recent_run_id == "run-2"
+
+    def test_fingerprint_is_deterministic(self) -> None:
+        """Same evidence always produces same fingerprint."""
+        runs1 = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff check", 1000.0),
+        ]
+        runs2 = [
+            FinishedRun("run-x", "fix/z", RunOutcome.GATE_FAILED, "lint: ruff check", 2000.0),
+        ]
+        drafts1 = detect_failure_patterns(runs1)
+        drafts2 = detect_failure_patterns(runs2)
+        assert drafts1[0].fingerprint == drafts2[0].fingerprint
+
+    def test_sorted_by_occurrence_count_descending(self) -> None:
+        """Drafts are sorted by occurrence_count descending, then fingerprint."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.GATE_FAILED, "lint: ruff", 1010.0),
+            FinishedRun("run-3", "fix/c", RunOutcome.INFRA_ERROR, "adapter: oom", 1020.0),
+            FinishedRun("run-4", "fix/d", RunOutcome.INFRA_ERROR, "adapter: oom", 1030.0),
+            FinishedRun("run-5", "fix/e", RunOutcome.INFRA_ERROR, "adapter: oom", 1040.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert [d.occurrence_count for d in drafts] == [3, 2]
+
+    def test_contributing_run_ids_ordered_by_started_at(self) -> None:
+        """contributing_run_ids are ordered by started_at descending."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff", 1000.0),
+            FinishedRun("run-2", "fix/b", RunOutcome.GATE_FAILED, "lint: ruff", 1020.0),
+            FinishedRun("run-3", "fix/c", RunOutcome.GATE_FAILED, "lint: ruff", 1010.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        assert drafts[0].contributing_run_ids == ["run-2", "run-3", "run-1"]
+
+    def test_empty_input_returns_empty(self) -> None:
+        """Empty run list produces no patterns."""
+        assert detect_failure_patterns([]) == []
+
+    def test_title_and_body_include_evidence(self) -> None:
+        """Pattern draft title and body are human-readable."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff check", 1000.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        draft = drafts[0]
+        assert "GATE_FAILED" in draft.title or "gate-failed" in draft.title.lower()
+        assert "lint: ruff check" in draft.title
+        assert "lint: ruff check" in draft.body
+        assert "gate-failed" in draft.body
+        assert "fix/a" in draft.body
+
+    def test_pattern_draft_has_all_required_fields(self) -> None:
+        """FailurePatternDraft instances have all required fields."""
+        runs = [
+            FinishedRun("run-1", "fix/a", RunOutcome.GATE_FAILED, "lint: ruff", 1000.0),
+        ]
+        drafts = detect_failure_patterns(runs)
+        draft = drafts[0]
+        assert isinstance(draft, FailurePatternDraft)
+        assert draft.title
+        assert draft.body
+        assert draft.fingerprint
+        assert draft.occurrence_count == 1
+        assert draft.most_recent_run_id == "run-1"
+        assert draft.contributing_run_ids == ["run-1"]
+
+
+def _open_run_state(run_id: str = "run-a") -> LedgerState:
+    """A minimal closed-run state with no open tasks (the common case)."""
+    state = LedgerState(run_id=run_id)
+    state.run_open = True
+    state.run_closed = True
+    return state
