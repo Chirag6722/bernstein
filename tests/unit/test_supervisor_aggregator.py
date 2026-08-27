@@ -10,11 +10,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from bernstein.core.agents.spawn_supervisor import RespawnBudget, SpawnSupervisor
 from bernstein.core.orchestration.supervisor_aggregator import (
     ParkedSessions,
     SupervisorSnapshot,
     format_summary_line,
     load_parked_sessions,
+    load_recent_failures,
     snapshot_to_dict,
 )
 
@@ -99,3 +103,39 @@ def test_summary_line_distinguishes_unavailable_from_genuinely_zero() -> None:
 
     assert snapshot_to_dict(unavailable)["parked_available"] is False
     assert snapshot_to_dict(zero_but_tracked)["parked_available"] is True
+
+
+def test_a_park_survives_a_pruned_store(tmp_path: Path) -> None:
+    """When parked.json is pruned/deleted, load_parked_sessions recovers from failures/ (#4637)."""
+    sup = SpawnSupervisor(
+        RespawnBudget(max_respawns=1),
+        workdir=tmp_path,
+        sleep=lambda _: None,
+    )
+
+    def _failing_spawn():
+        raise RuntimeError("spawn crashed")
+
+    with pytest.raises(RuntimeError):
+        sup.spawn("sess-pruned", _failing_spawn)
+
+    # Confirm normal state from parked.json
+    parked_file = tmp_path / ".sdd" / "runtime" / "spawn_supervisor" / "parked.json"
+    assert parked_file.exists()
+    assert "sess-pruned" in load_parked_sessions(tmp_path)
+
+    # Prune/delete parked.json
+    parked_file.unlink()
+    assert not parked_file.exists()
+
+    # Fallback reads failures/ and recovers the session id and available=True
+    recovered = load_parked_sessions(tmp_path)
+    assert recovered.available is True
+    assert "sess-pruned" in recovered.session_ids
+
+    # Diagnostic is also readable via load_recent_failures
+    failures = load_recent_failures(tmp_path, "sess-pruned")
+    assert len(failures) == 1
+    assert failures[0]["kind"] == "respawn_exhausted"
+    assert failures[0]["session_id"] == "sess-pruned"
+    assert failures[0]["reason"] == "respawn_budget_exhausted"

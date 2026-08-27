@@ -217,9 +217,15 @@ def load_parked_sessions(workdir: Path) -> ParkedSessions:
             if isinstance(ids, list):
                 ids_list = cast(list[Any], ids)
                 parked.update(str(i) for i in ids_list if isinstance(i, str))
-    # Lifecycle events fallback: scan the failures/ records.
+    # Lifecycle events fallback: scan the failures/ records. A fallback, not
+    # a second source to union in: a `respawn_exhausted` record states that a
+    # session was once exhausted, which is history, not present state. Unioned
+    # unconditionally it resurrects every id that `clear_parked` or a resume
+    # has since removed, because the marker it was cleared from is still there
+    # and still says nothing about it. Read it only when the marker gave no
+    # answer at all -- absent, or unreadable.
     failures_dir = workdir / ".sdd" / "runtime" / "failures"
-    if failures_dir.exists():
+    if not available and failures_dir.exists():
         with suppress(OSError):
             for entry in sorted(failures_dir.glob("*.json")):
                 with suppress(OSError, json.JSONDecodeError):

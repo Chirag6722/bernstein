@@ -220,3 +220,48 @@ def test_a_corrupt_store_does_not_stop_a_park_being_recorded(tmp_path: Path) -> 
     SpawnSupervisor(workdir=tmp_path).park("batch:T-10")
 
     assert load_parked_sessions(tmp_path).session_ids == frozenset({"batch:T-10"})
+
+
+def test_a_pruned_store_still_reports_the_park_the_failure_record_holds(tmp_path: Path) -> None:
+    """The fallback this PR exists for, pinned by a test.
+
+    A workspace cleanup can remove the marker file while the failure
+    records survive. Without the fallback the reader would answer "not
+    parked" for a session that never resumed. Driven through the real
+    producer rather than a hand-written record, so a change to the
+    record shape fails here instead of passing against a fixture that
+    only this test believes in.
+    """
+    sup = SpawnSupervisor(workdir=tmp_path)
+    budget = _budget(max_respawns=1)
+    assert sup.record_spawn_failure("batch:T-pruned", RuntimeError("boom"), budget=budget) is True
+    assert sup.record_spawn_failure("batch:T-pruned", RuntimeError("boom")) is False
+
+    _store(tmp_path).unlink()
+
+    result = load_parked_sessions(tmp_path)
+    assert result.available
+    assert result.session_ids == frozenset({"batch:T-pruned"})
+
+
+def test_a_cleared_park_is_not_resurrected_by_its_failure_record(tmp_path: Path) -> None:
+    """Clearing has to survive the fallback.
+
+    A ``respawn_exhausted`` record says a session was once exhausted --
+    history, not present state. Read as a second source and unioned in,
+    it puts back every id an operator resume or ``clear_parked`` has
+    removed, and the marker it was cleared from keeps saying nothing
+    about it. The fallback therefore runs only when the marker gave no
+    answer at all.
+    """
+    sup = SpawnSupervisor(workdir=tmp_path)
+    budget = _budget(max_respawns=1)
+    assert sup.record_spawn_failure("batch:T-cleared", RuntimeError("boom"), budget=budget) is True
+    assert sup.record_spawn_failure("batch:T-cleared", RuntimeError("boom")) is False
+    assert load_parked_sessions(tmp_path).session_ids == frozenset({"batch:T-cleared"})
+
+    assert sup.clear_parked("batch:T-cleared") is True
+
+    result = load_parked_sessions(tmp_path)
+    assert result.available
+    assert result.session_ids == frozenset()
