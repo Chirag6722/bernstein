@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 
 from bernstein.core.backlog_parser import parse_backlog_text
 from bernstein.core.context_collapse import staged_context_collapse
+from bernstein.core.defaults import ORCHESTRATOR
 from bernstein.core.models import Task, TaskType
 from bernstein.core.orchestration.best_of_n import is_best_of_n, task_n
 
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 # Fair scheduling: age threshold in seconds after which lower-priority tasks get boosted
 _PRIORITY_AGE_THRESHOLD_SECONDS = 300  # 5 minutes
 _PRIORITY_BOOST_AMOUNT = 1  # Boost priority by 1 (lower value = higher priority)
+_MAX_PRIORITY_AGE_BOOST = 2  # Maximum cumulative boost allowed from aging (#4675)
 
 
 def _task_affinity_config(task: Task) -> dict[str, object]:
@@ -499,6 +501,10 @@ def group_by_role(
     agent_affinity: dict[str, str] | None = None,
     cost_estimates: dict[str, float] | None = None,
     budget_remaining_usd: float | None = None,
+    *,
+    age_threshold_seconds: float | None = None,
+    boost_amount: int | None = None,
+    max_age_boost: int | None = None,
 ) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 
@@ -515,8 +521,9 @@ def group_by_role(
     If alive_per_role is provided, batches are further reordered to prioritize
     roles with zero alive agents (starving roles) before well-served roles.
 
-    Fair scheduling: tasks waiting longer than PRIORITY_AGE_THRESHOLD_SECONDS
-    get their effective priority boosted to prevent P1 tasks from starving P2/P3.
+    Fair scheduling: tasks waiting longer than priority_age_threshold_s
+    get their effective priority boosted up to max_priority_age_boost steps
+    to prevent P1 tasks from indefinitely starving P2/P3 tasks (#4675).
 
     Agent affinity: when agent_affinity is provided, tasks that prefer the same
     agent (downstream of a completed task) are merged into the same affinity
@@ -544,6 +551,9 @@ def group_by_role(
             so expensive work runs earlier while budget is still available.
         budget_remaining_usd: Current budget remaining. Used only to disable the
             cost-aware secondary sort once no spend remains.
+        age_threshold_seconds: Optional override for age threshold in seconds.
+        boost_amount: Optional override for priority boost step per threshold period.
+        max_age_boost: Optional override for maximum cumulative priority boost steps.
 
     Returns:
         List of batches, each a list of same-role tasks, round-robin interleaved.
@@ -557,6 +567,21 @@ def group_by_role(
 
     # Calculate current time for age-based priority boosting
     current_time = time.time() if task_created_at else None
+    effective_threshold = (
+        age_threshold_seconds
+        if age_threshold_seconds is not None
+        else getattr(ORCHESTRATOR, "priority_age_threshold_s", _PRIORITY_AGE_THRESHOLD_SECONDS)
+    )
+    effective_boost_amount = (
+        boost_amount
+        if boost_amount is not None
+        else getattr(ORCHESTRATOR, "priority_boost_step", _PRIORITY_BOOST_AMOUNT)
+    )
+    effective_max_boost = (
+        max_age_boost
+        if max_age_boost is not None
+        else getattr(ORCHESTRATOR, "max_priority_age_boost", _MAX_PRIORITY_AGE_BOOST)
+    )
 
     def _sort_key(t: Task) -> tuple[float, float, float, int, str]:
         # Priority boost for upgrade proposals: subtract 1 from priority value
@@ -571,9 +596,10 @@ def group_by_role(
         age_boost = 0
         if current_time is not None and task_created_at and t.id in task_created_at:
             age_seconds = current_time - task_created_at[t.id]
-            if age_seconds > _PRIORITY_AGE_THRESHOLD_SECONDS:
-                # Boost priority by 1 for each threshold period exceeded
-                age_boost = int(age_seconds / _PRIORITY_AGE_THRESHOLD_SECONDS) * _PRIORITY_BOOST_AMOUNT
+            if effective_threshold > 0 and age_seconds > effective_threshold:
+                # Boost priority by boost_amount for each threshold period exceeded, capped at max_age_boost
+                raw_boost = int(age_seconds / effective_threshold) * effective_boost_amount
+                age_boost = min(raw_boost, effective_max_boost) if effective_max_boost is not None else raw_boost
 
         # Effective priority: lower is better
         effective_priority = priority_boost - age_boost
