@@ -104,6 +104,7 @@ from bernstein.core.orchestration.run_stall import (
     evaluate_run_stall,
     resolve_grace_s,
     resolve_min_ticks,
+    resolve_planning_window_s,
 )
 from bernstein.core.orchestration.schedule_projection import (
     SCHEDULE_PROJECTION_REV,
@@ -2662,6 +2663,7 @@ class Orchestrator:
             now=time.time(),
             grace_s=grace_s,
             min_ticks=min_ticks,
+            planning_window_s=resolve_planning_window_s(self._config.planning_window_s),
         )
         if not verdict.stalled:
             logger.debug(
@@ -2710,7 +2712,13 @@ class Orchestrator:
         _stuck_ids = sorted(
             str(task.id) for status, tasks in settled.items() if status in ACTIVE_UNFINISHED_STATUSES for task in tasks
         )
-        if not _stuck_ids:
+        # An empty ledger has no task to fail, and that absence IS the
+        # verdict rather than a reason to doubt it: the planning task never
+        # landed a graph, so there is nothing to mark stuck and nothing that
+        # can arrive. Treating "no stuck task" as "run continues" here is
+        # what left that run ticking to its wall-clock timeout.
+        _ledger_empty = not any(settled.values())
+        if not _stuck_ids and not _ledger_empty:
             logger.info(
                 "run_stall_check: no actively-unfinished task left after the %.1fs settle "
                 "window (tick #%d) - run continues",
