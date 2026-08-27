@@ -143,16 +143,20 @@ jobs:
         # in drift-publish tracks accumulated flags in a single issue.
         env:
           BASELINE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set +e
-          baseline_args=()
+          check_args=()
           if [ -n "${BASELINE_SHA}" ]; then
-            baseline_args=(--baseline "${BASELINE_SHA}")
+            check_args+=(--baseline "${BASELINE_SHA}")
           fi
-          python scripts/check_context_staleness.py "${baseline_args[@]}" > staleness-report.md
+          if [ -n "${HEAD_SHA}" ]; then
+            check_args+=(--ref "${HEAD_SHA}")
+          fi
+          python scripts/check_context_staleness.py "${check_args[@]}" > staleness-report.md
           rc=$?
           echo "report_rc=${rc}" >> "$GITHUB_OUTPUT"
-          python scripts/check_context_staleness.py "${baseline_args[@]}" --json > staleness-report.json
+          python scripts/check_context_staleness.py "${check_args[@]}" --json > staleness-report.json
           clean=$(python -c "import json; print(json.load(open('staleness-report.json')).get('clean', False))" 2>/dev/null || echo "unknown")
           new_flags=$(python -c "import json; print(len(json.load(open('staleness-report.json')).get('newly_flagged', [])))" 2>/dev/null || echo "0")
           echo "clean=${clean}" >> "$GITHUB_OUTPUT"

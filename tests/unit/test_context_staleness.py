@@ -283,6 +283,56 @@ def test_baseline_marks_only_newly_flagged(tmp_path: Path, staleness) -> None:
     assert [e.context.path for e in report.newly_flagged] == ["src/beta/AGENTS.md"]
 
 
+def test_pr_branch_does_not_inherit_staleness_from_concurrent_main_commits(tmp_path: Path, staleness) -> None:
+    """A pull request branch is only flagged for scopes the PR itself modified (#4634).
+
+    Builds two branches from one base, lands an unrelated commit in a curated scope
+    on the default branch, and asserts the untouched branch reports zero newly-flagged
+    files while the branch that actually edited that scope reports one.
+    """
+    env = _git_env(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, env, "-c", "init.defaultBranch=main", "init", "--quiet")
+    for pkg in ("alpha", "beta"):
+        _write(repo, f"src/{pkg}/AGENTS.md", f"# {pkg} context\n")
+        _write(repo, f"src/{pkg}/mod.py", "".join(f"LINE_{i} = {i}\n" for i in range(10)))
+    _git(repo, env, "add", "-A")
+    _git(repo, env, "commit", "--quiet", "-m", "seed: two scoped context files")
+    base_sha = _git(repo, env, "rev-parse", "HEAD")
+
+    # Create branch 1: untouched scope (only edits an unrelated file)
+    _git(repo, env, "checkout", "-b", "branch-untouched", base_sha)
+    _write(repo, "README.md", "# Bernstein Docs\n")
+    _git(repo, env, "add", "-A")
+    _git(repo, env, "commit", "--quiet", "-m", "docs: update readme")
+    untouched_sha = _git(repo, env, "rev-parse", "HEAD")
+
+    # Create branch 2: edits src/alpha (crosses threshold)
+    _git(repo, env, "checkout", "-b", "branch-alpha", base_sha)
+    _big_rewrite(repo, env, rel="src/alpha/mod.py")
+    alpha_sha = _git(repo, env, "rev-parse", "HEAD")
+
+    # On main (default branch), land an unrelated commit that pushes src/beta over threshold
+    _git(repo, env, "checkout", "main")
+    _big_rewrite(repo, env, rel="src/beta/mod.py")
+    main_sha = _git(repo, env, "rev-parse", "HEAD")
+
+    # Untouched branch tested against main: 0 newly flagged files
+    payload_untouched = _run_json(repo, env, "--ref", untouched_sha, "--baseline", main_sha)
+    assert payload_untouched["newly_flagged"] == []
+
+    report_untouched = staleness.compute_report(repo, untouched_sha, main_sha)
+    assert report_untouched.newly_flagged == []
+
+    # Branch that actually edited alpha tested against main: 1 newly flagged file (alpha)
+    payload_alpha = _run_json(repo, env, "--ref", alpha_sha, "--baseline", main_sha)
+    assert payload_alpha["newly_flagged"] == ["src/alpha/AGENTS.md"]
+
+    report_alpha = staleness.compute_report(repo, alpha_sha, main_sha)
+    assert [e.context.path for e in report_alpha.newly_flagged] == ["src/alpha/AGENTS.md"]
+
+
 def test_committed_overlay_is_repo_scoped_and_flags_on_lines_only(tmp_path: Path, staleness) -> None:
     env = _git_env(tmp_path)
     repo = tmp_path / "repo"
