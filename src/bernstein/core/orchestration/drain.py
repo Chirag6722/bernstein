@@ -626,7 +626,9 @@ class DrainCoordinator:
         return _rmtree_windows_safe(entry)
 
     def _delete_agent_branches(self) -> int:
-        """Delete agent/* branches and return count of branches deleted."""
+        """Delete agent/* branches safely with rescue refs for unmerged work (#4677)."""
+        from bernstein.core.git.git_hygiene import safe_force_delete_branch
+
         branch_result = _run_git(["branch", "--list", "agent/*"], cwd=self._workdir)
         if branch_result.returncode != 0:
             return 0
@@ -635,15 +637,13 @@ class DrainCoordinator:
             branch_name = line.strip().lstrip("*+ ")
             if not branch_name:
                 continue
-            del_result = _run_git(["branch", "-D", branch_name], cwd=self._workdir)
-            if del_result.returncode == 0:
+            success, _rescue_ref = safe_force_delete_branch(
+                self._workdir,
+                branch_name,
+                run_id=getattr(self, "_run_id", None),
+            )
+            if success:
                 deleted += 1
-            elif "not found" not in del_result.stderr:
-                logger.warning(
-                    "Failed to delete branch %s: %s",
-                    branch_name,
-                    del_result.stderr.strip(),
-                )
         return deleted
 
     async def _cancel_drain_mode(self) -> None:

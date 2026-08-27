@@ -196,3 +196,140 @@ def test_discover_agents_from_agents_json_admits_live_pid(tmp_path: Path) -> Non
         coordinator._discover_agents_from_agents_json()  # pyright: ignore[reportPrivateUsage]
 
     assert [a.session_id for a in coordinator._agents] == ["s-1"]  # pyright: ignore[reportPrivateUsage]
+
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+
+    res = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return res.stdout.strip()
+
+
+def test_drain_rescues_unmerged_agent_branch(tmp_path: Path) -> None:
+    """Drain on a repo with an unmerged agent branch leaves a rescue ref at its tip and no branch (#4677)."""
+    # 1. Initialize real git repository
+    _git(tmp_path, "-c", "init.defaultBranch=main", "init", "--quiet")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    (tmp_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "initial commit", "--quiet")
+
+    # 2. Create unmerged agent branch
+    _git(tmp_path, "checkout", "-b", "agent/sess-unmerged", "--quiet")
+    (tmp_path / "work.txt").write_text("unmerged work\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "unmerged agent work", "--quiet")
+    unmerged_sha = _git(tmp_path, "rev-parse", "HEAD")
+
+    # 3. Switch back to main and run drain cleanup of agent branches
+    _git(tmp_path, "checkout", "main", "--quiet")
+    coordinator = DrainCoordinator(tmp_path)
+    coordinator._run_id = "test-run-123"  # pyright: ignore[reportPrivateUsage]
+
+    deleted = coordinator._delete_agent_branches()  # pyright: ignore[reportPrivateUsage]
+    assert deleted == 1
+
+    # 4. Assert branch is deleted
+    branches = _git(tmp_path, "branch", "--list", "agent/sess-unmerged")
+    assert branches == ""
+
+    # 5. Assert rescue ref exists and points to the unmerged commit tip
+    rescue_ref = "refs/rescue/test-run-123/agent/sess-unmerged"
+    rescued_sha = _git(tmp_path, "rev-parse", rescue_ref)
+    assert rescued_sha == unmerged_sha
+
+
+def test_drain_does_not_tag_merged_agent_branch(tmp_path: Path) -> None:
+    """Drain on a merged agent branch deletes the branch without creating a rescue ref (#4677)."""
+    # 1. Initialize real git repository
+    _git(tmp_path, "-c", "init.defaultBranch=main", "init", "--quiet")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    (tmp_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "initial commit", "--quiet")
+
+    # 2. Create agent branch and merge into main
+    _git(tmp_path, "checkout", "-b", "agent/sess-merged", "--quiet")
+    (tmp_path / "merged.txt").write_text("merged work\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "merged agent work", "--quiet")
+    _git(tmp_path, "checkout", "main", "--quiet")
+    _git(tmp_path, "merge", "agent/sess-merged", "--quiet")
+
+    # 3. Run drain
+    coordinator = DrainCoordinator(tmp_path)
+    coordinator._run_id = "test-run-456"  # pyright: ignore[reportPrivateUsage]
+
+    deleted = coordinator._delete_agent_branches()  # pyright: ignore[reportPrivateUsage]
+    assert deleted == 1
+
+    # 4. Assert branch is deleted and no rescue ref was created
+    branches = _git(tmp_path, "branch", "--list", "agent/sess-merged")
+    assert branches == ""
+
+    rescue_refs = _git(tmp_path, "for-each-ref", "refs/rescue/**")
+    assert rescue_refs == ""
+
+
+def test_safe_force_delete_is_only_branch_D_callsite_in_drain_and_hygiene() -> None:
+    """The safe_force_delete_branch helper is the only branch -D call site in drain.py and git_hygiene.py (#4677)."""
+    repo_root = Path(__file__).resolve().parents[2]
+    drain_py = repo_root / "src" / "bernstein" / "core" / "orchestration" / "drain.py"
+    hygiene_py = repo_root / "src" / "bernstein" / "core" / "git" / "git_hygiene.py"
+
+    drain_text = drain_py.read_text(encoding="utf-8")
+    hygiene_text = hygiene_py.read_text(encoding="utf-8")
+
+    # drain.py must not contain direct branch -D
+    assert '"branch", "-D"' not in drain_text
+    assert "'branch', '-D'" not in drain_text
+
+    # git_hygiene.py must contain exactly one branch -D, inside safe_force_delete_branch
+    assert hygiene_text.count('"branch", "-D"') == 1
+
+
+def test_drain_refuses_deletion_if_rescue_fails(tmp_path: Path) -> None:
+    """If rescue ref creation fails, safe_force_delete_branch returns (False, None) and preserves the branch (#4677)."""
+    from bernstein.core.git.git_hygiene import safe_force_delete_branch
+
+    # 1. Initialize real git repository
+    _git(tmp_path, "-c", "init.defaultBranch=main", "init", "--quiet")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    (tmp_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "initial commit", "--quiet")
+
+    # 2. Create unmerged agent branch
+    _git(tmp_path, "checkout", "-b", "agent/sess-preserve", "--quiet")
+    (tmp_path / "work.txt").write_text("unmerged work\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "unmerged agent work", "--quiet")
+    _git(tmp_path, "checkout", "main", "--quiet")
+
+    # 3. Create a conflicting ref that blocks refs/rescue/blocked-run/agent/sess-preserve
+    # (creating refs/rescue/blocked-run as a direct ref causes directory/file conflict)
+    _git(tmp_path, "update-ref", "refs/rescue/blocked-run", "HEAD")
+
+    # 4. Attempt deletion under the blocked run-id
+    deleted, rescue_ref = safe_force_delete_branch(
+        tmp_path,
+        "agent/sess-preserve",
+        run_id="blocked-run",
+    )
+
+    # Must refuse to delete and return (False, None)
+    assert deleted is False
+    assert rescue_ref is None
+
+    # Branch must still exist intact
+    branches = _git(tmp_path, "branch", "--list", "agent/sess-preserve")
+    assert "agent/sess-preserve" in branches
