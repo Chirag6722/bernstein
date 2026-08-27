@@ -167,6 +167,13 @@ class OrchestratorDefaults:
     # ``tuning.orchestrator.max_agent_runtime_s``.
     max_agent_runtime_s: int = 1800  # 30 min
 
+    # Fair scheduling priority age-boost tuning (#4675).
+    # Tasks waiting longer than priority_age_threshold_s receive a priority
+    # boost of priority_boost_step per elapsed block, capped at max_priority_age_boost.
+    priority_age_threshold_s: float = 300.0  # 5 minutes
+    priority_boost_step: int = 1  # priority step boosted per threshold period
+    max_priority_age_boost: int = 2  # maximum cumulative boost allowed from aging
+
 
 # ---------------------------------------------------------------------------
 # Spawn / Agent defaults

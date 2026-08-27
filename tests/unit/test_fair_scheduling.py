@@ -157,3 +157,135 @@ def test_fair_scheduling_mixed_roles() -> None:
 
     # Roles should be interleaved, not all of one role first
     assert min(qa_indices) < max(backend_indices), "Roles should be interleaved"
+
+
+def test_priority_age_boost_is_capped_after_many_blocks() -> None:
+    """A task that has waited 10 threshold blocks gains only the cap (default: 2) (#4675)."""
+    current_time = time.time()
+    # P4 task waiting 10 blocks (3000s, threshold 300s)
+    # Raw boost would be 10, but cap is 2 -> effective priority = 4 - 2 = 2.
+    old_p4 = Task(
+        id="old-p4",
+        title="Old P4 task",
+        description="Low priority backlog item",
+        role="backend",
+        priority=4,
+        created_at=current_time - 3000,
+    )
+    # Fresh P2 task (effective priority = 2, priority = 2)
+    fresh_p2 = Task(
+        id="fresh-p2",
+        title="Fresh P2 task",
+        description="Normal priority task",
+        role="backend",
+        priority=2,
+        created_at=current_time,
+    )
+    # Fresh P3 task (effective priority = 3)
+    fresh_p3 = Task(
+        id="fresh-p3",
+        title="Fresh P3 task",
+        description="Minor task",
+        role="backend",
+        priority=3,
+        created_at=current_time,
+    )
+
+    task_created_at = {
+        old_p4.id: old_p4.created_at,
+        fresh_p2.id: fresh_p2.created_at,
+        fresh_p3.id: fresh_p3.created_at,
+    }
+    batches = group_by_role(
+        [old_p4, fresh_p2, fresh_p3],
+        max_per_batch=1,
+        task_created_at=task_created_at,
+    )
+    ordered_ids = [b[0].id for b in batches]
+
+    # With cap=2:
+    # fresh-p2 (effective 2, priority 2) < old-p4 (effective 2, priority 4) < fresh-p3 (effective 3)
+    # If uncapped, old-p4 would have effective priority -6 and come first.
+    assert ordered_ids == ["fresh-p2", "old-p4", "fresh-p3"]
+
+
+def test_fresh_p1_outranks_capped_boost_p3() -> None:
+    """A fresh P1 task strictly outranks a P3 task that has reached maximum age boost (#4675)."""
+    current_time = time.time()
+    fresh_p1 = Task(
+        id="fresh-p1",
+        title="Critical urgent bug",
+        description="P1 urgent",
+        role="backend",
+        priority=1,
+        created_at=current_time,
+    )
+    # P3 task waiting 10 blocks (3000s, threshold 300s) -> capped at boost 2 -> effective priority 1
+    old_p3 = Task(
+        id="old-p3-parked",
+        title="Parked P3 item",
+        description="P3 backlog",
+        role="backend",
+        priority=3,
+        created_at=current_time - 3000,
+    )
+
+    task_created_at = {
+        fresh_p1.id: fresh_p1.created_at,
+        old_p3.id: old_p3.created_at,
+    }
+    batches = group_by_role(
+        [old_p3, fresh_p1],
+        max_per_batch=1,
+        task_created_at=task_created_at,
+    )
+    ordered_ids = [b[0].id for b in batches]
+
+    # Fresh P1 must come before old P3
+    assert ordered_ids == ["fresh-p1", "old-p3-parked"]
+
+
+def test_custom_tuning_knobs_respected() -> None:
+    """group_by_role respects explicit age_threshold_seconds, boost_amount, and max_age_boost overrides."""
+    current_time = time.time()
+    task_p3 = Task(
+        id="task-p3",
+        title="P3 task",
+        description="P3",
+        role="backend",
+        priority=3,
+        created_at=current_time - 200,
+    )
+    task_p2 = Task(
+        id="task-p2",
+        title="P2 task",
+        description="P2",
+        role="backend",
+        priority=2,
+        created_at=current_time,
+    )
+
+    task_created_at = {task_p3.id: task_p3.created_at, task_p2.id: task_p2.created_at}
+
+    # With threshold=100s, boost=1, max_boost=2: task_p3 has waited 200s -> boost 2 -> effective priority 1
+    # effective priority 1 beats task_p2 effective priority 2
+    batches_boosted = group_by_role(
+        [task_p2, task_p3],
+        max_per_batch=1,
+        task_created_at=task_created_at,
+        age_threshold_seconds=100.0,
+        boost_amount=1,
+        max_age_boost=2,
+    )
+    assert [b[0].id for b in batches_boosted] == ["task-p3", "task-p2"]
+
+    # With max_boost=0 (disabled aging): task_p2 priority 2 beats task_p3 priority 3
+    batches_no_boost = group_by_role(
+        [task_p2, task_p3],
+        max_per_batch=1,
+        task_created_at=task_created_at,
+        age_threshold_seconds=100.0,
+        boost_amount=1,
+        max_age_boost=0,
+    )
+    assert [b[0].id for b in batches_no_boost] == ["task-p2", "task-p3"]
