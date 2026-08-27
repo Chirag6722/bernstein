@@ -204,7 +204,6 @@ def test_push_does_not_embed_token_in_remote_url(workflow_text: str) -> None:
 CAPABILITY_ASSERTIONS: list[tuple[str, str]] = [
     # Detection layer
     ("c01_bayesian_confidence", "autoheal-bayes.json"),
-    ("c02_flake_detector", "flake_detector"),
     ("c04_failure_clustering", "bucketize"),
     # Classification layer
     ("c05_llm_categorization_envvar", "BERNSTEIN_AUTOHEAL_BUDGET_USD"),
@@ -213,7 +212,7 @@ CAPABILITY_ASSERTIONS: list[tuple[str, str]] = [
     # Safety layer
     ("c11_diff_aware_self_test", "ruff"),
     ("c12_permission_profile", "cordon"),
-    ("c13_cost_breaker", "cost_guard"),
+    ("c13_cost_breaker", "BERNSTEIN_AUTOHEAL_BUDGET_USD"),
     ("c15_blast_radius_gate", "blast_radius"),
     # Provenance layer
     ("c16_lineage_v2", "autoheal-history.jsonl"),

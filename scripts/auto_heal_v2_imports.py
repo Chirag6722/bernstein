@@ -15,7 +15,6 @@ import importlib
 import sys
 
 _ALIASES: dict[str, str] = {
-    "cost_guard": "bernstein.core.autoheal.cost_guard",
     "blast_radius": "bernstein.core.quality.blast_radius",
     "decision_log": "bernstein.core.observability.decision_log",
     "calibration": "bernstein.eval.calibration",
@@ -25,12 +24,10 @@ _ALIASES: dict[str, str] = {
     "cordon": "bernstein.core.autoheal.cordon",
     "bandit": "bernstein.core.autoheal.bandit",
     "bayesian": "bernstein.core.autoheal.bayesian",
-    "flake_detector": "bernstein.core.autoheal.flake_detector",
     "shadow_mode": "bernstein.core.autoheal.shadow_mode",
     "kill_switch": "bernstein.core.autoheal.kill_switch",
     "audit_log": "bernstein.core.autoheal.audit_log",
     "idempotency": "bernstein.core.autoheal.idempotency",
-    "provenance": "bernstein.core.autoheal.provenance",
     "wire": "bernstein.core.autoheal.wire",
 }
 

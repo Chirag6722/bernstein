@@ -15,10 +15,6 @@ Modules
     Per-class Bayesian confidence: maintains a Beta prior per CI class
     name and updates it from observed heal outcomes.
 
-``flake_detector``
-    Distinguishes flake from genuine fail by counting non-adjacent
-    failures of the same test name across a sliding window of main
-    commits.
 
 ``shadow_mode``
     Quarantines new repair strategies until they accumulate evidence.
@@ -33,10 +29,6 @@ Modules
     File-based emergency disable: workflow first-thing checks
     ``.sdd/autoheal-disabled`` for an unexpired flag and bails if set.
 
-``cost_guard``
-    Thin wrapper over ``core/cost/cost_tracker`` that exposes a single
-    function the workflow can call before any LLM-grounded path.
-
 ``lineage_writer``
     Writes one ``ChildBody`` per heal action under
     ``.sdd/lineage/v2/children/`` so operators can replay heal history.
@@ -48,10 +40,6 @@ Modules
 ``cordon``
     Cordon-zone enforcement: pre-commit hook that aborts if any staged
     file is outside the allowlist.
-
-``provenance``
-    Code-provenance check: was the offending line introduced in the
-    last 24h? Influences risk score downward when true.
 
 Public surface
 --------------
