@@ -315,9 +315,13 @@ def safe_force_delete_branch(
         rescue_ref = f"refs/rescue/{eff_run_id}/{branch}"
         update_res = run_git(["update-ref", rescue_ref, branch], workdir, timeout=10)
         if not update_res.ok:
-            logger.warning("Failed to create rescue ref %s for unmerged branch %s", rescue_ref, branch)
-        else:
-            logger.info("Rescued unmerged branch %s at %s", branch, rescue_ref)
+            logger.warning(
+                "Failed to create rescue ref %s for unmerged branch %s: refusing to delete unmerged work",
+                rescue_ref,
+                branch,
+            )
+            return False, None
+        logger.info("Rescued unmerged branch %s at %s", branch, rescue_ref)
 
     del_res = run_git(["branch", "-D", branch], workdir, timeout=10)
     if del_res.ok:

@@ -128,6 +128,27 @@ def test_force_unmerged_true_deletes_unmerged_branch(tmp_path: Path) -> None:
     assert mock_run_git.call_args_list[3].args[0] == ["branch", "-D", "agent/unmerged"]
 
 
+def test_failed_rescue_ref_refuses_to_delete_unmerged_branch(tmp_path: Path) -> None:
+    """If update-ref fails to create a rescue ref, deletion is aborted to preserve unmerged work (#4677)."""
+    with patch(
+        "bernstein.core.git_hygiene.run_git",
+        side_effect=[
+            GitResult(0, "agent/unmerged\n", ""),
+            # ancestry probe -> not merged
+            GitResult(1, "", ""),
+            # rescue ref update FAILS (e.g. namespace collision or disk full)
+            GitResult(1, "", "fatal: cannot lock ref"),
+        ],
+    ) as mock_run_git:
+        deleted, skipped = _delete_merged_agent_branches(tmp_path, force_unmerged=True)
+
+    assert deleted == 0
+    assert skipped == 1
+    # Exactly 3 git calls: list, ancestry, failed update-ref (never executes branch -D)
+    assert len(mock_run_git.call_args_list) == 3
+    assert mock_run_git.call_args_list[2].args[0][0] == "update-ref"
+
+
 def test_delete_mix_of_branches(tmp_path: Path) -> None:
     """Mixed list: merged branch deleted, unmerged preserved, active preserved."""
     with patch(

@@ -294,3 +294,42 @@ def test_safe_force_delete_is_only_branch_D_callsite_in_drain_and_hygiene() -> N
 
     # git_hygiene.py must contain exactly one branch -D, inside safe_force_delete_branch
     assert hygiene_text.count('"branch", "-D"') == 1
+
+
+def test_drain_refuses_deletion_if_rescue_fails(tmp_path: Path) -> None:
+    """If rescue ref creation fails, safe_force_delete_branch returns (False, None) and preserves the branch (#4677)."""
+    from bernstein.core.git.git_hygiene import safe_force_delete_branch
+
+    # 1. Initialize real git repository
+    _git(tmp_path, "-c", "init.defaultBranch=main", "init", "--quiet")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    (tmp_path / "README.md").write_text("# Test Repo\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "initial commit", "--quiet")
+
+    # 2. Create unmerged agent branch
+    _git(tmp_path, "checkout", "-b", "agent/sess-preserve", "--quiet")
+    (tmp_path / "work.txt").write_text("unmerged work\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "unmerged agent work", "--quiet")
+    _git(tmp_path, "checkout", "main", "--quiet")
+
+    # 3. Create a conflicting ref that blocks refs/rescue/blocked-run/agent/sess-preserve
+    # (creating refs/rescue/blocked-run as a direct ref causes directory/file conflict)
+    _git(tmp_path, "update-ref", "refs/rescue/blocked-run", "HEAD")
+
+    # 4. Attempt deletion under the blocked run-id
+    deleted, rescue_ref = safe_force_delete_branch(
+        tmp_path,
+        "agent/sess-preserve",
+        run_id="blocked-run",
+    )
+
+    # Must refuse to delete and return (False, None)
+    assert deleted is False
+    assert rescue_ref is None
+
+    # Branch must still exist intact
+    branches = _git(tmp_path, "branch", "--list", "agent/sess-preserve")
+    assert "agent/sess-preserve" in branches
