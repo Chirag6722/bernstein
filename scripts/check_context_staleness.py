@@ -311,20 +311,34 @@ def compute_report(repo: Path, ref: str, baseline: str | None = None) -> Stalene
 
     With ``baseline``, each flagged entry is additionally marked
     ``newly_flagged`` when the same context file was not flagged at the
-    baseline commit — the signal the PR surface keys on.
+    baseline commit AND the commits between baseline and ref contributed
+    churn to that context file's scope.
     """
     ref_sha = _git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
     baseline_sha: str | None = None
     baseline_flagged: set[str] = set()
+    merge_base_sha: str | None = None
+
     if baseline is not None:
         baseline_sha = _git(repo, "rev-parse", "--verify", f"{baseline}^{{commit}}").strip()
-        baseline_flagged = {entry.context.path for entry in _compute_entries(repo, baseline_sha) if entry.flagged}
+        try:
+            merge_base_sha = _git(repo, "merge-base", baseline_sha, ref_sha).strip()
+        except subprocess.CalledProcessError:
+            merge_base_sha = baseline_sha
+        baseline_flagged = {entry.context.path for entry in _compute_entries(repo, merge_base_sha) if entry.flagged}
 
     report = StalenessReport(ref=ref_sha, baseline=baseline_sha)
     report.entries = _compute_entries(repo, ref_sha)
-    if baseline_sha is not None:
+    if baseline_sha is not None and merge_base_sha is not None:
         for entry in report.entries:
-            entry.newly_flagged = entry.flagged and entry.context.path not in baseline_flagged
+            if not entry.flagged or entry.context.path in baseline_flagged:
+                entry.newly_flagged = False
+                continue
+            files_changed, insertions, deletions, mod_add, mod_rem = _net_diff(
+                repo, merge_base_sha, ref_sha, entry.context.scope
+            )
+            has_churn = files_changed > 0 or (insertions + deletions) > 0 or mod_add > 0 or mod_rem > 0
+            entry.newly_flagged = has_churn
     return report
 
 
