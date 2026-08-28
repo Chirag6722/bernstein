@@ -76,6 +76,7 @@ the real digest.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -109,6 +110,7 @@ if TYPE_CHECKING:
     from bernstein.core.security.result_receipt_bundle import ChainLink, TaskRef
     from bernstein.core.volunteer.claim import ClaimClient
     from bernstein.core.volunteer.manifest import VolunteerManifest
+    from bernstein.core.volunteer.runner import TaskDiff
     from bernstein.core.volunteer.sandbox_profile import VolunteerSandboxProfile
 
 #: A patch path that is not a usable repository-relative path at all:
@@ -442,6 +444,7 @@ def _finish_volunteer_task(
         describing a failure.
     """
     if profile.manifest_sha256 != manifest.digest:
+        _clean_workspace(workspace)
         return VolunteerRefusal(
             reason=REASON_PROFILE_MANIFEST_MISMATCH,
             detail=(
@@ -453,6 +456,7 @@ def _finish_volunteer_task(
 
     refusal = enforce_allowed_paths(patch, manifest=manifest, workspace=workspace)
     if refusal is not None:
+        _clean_workspace(workspace)
         return refusal
 
     budget = profile.wall_clock_seconds if gate_budget_seconds is None else gate_budget_seconds
@@ -463,6 +467,7 @@ def _finish_volunteer_task(
         budget_seconds=budget,
     )
     if gate_refusal is not None:
+        _clean_workspace(workspace)
         return gate_refusal
 
     public_key = signing_key.public_key()
@@ -589,3 +594,28 @@ def _decode(raw: bytes) -> str:
 def _utc_second() -> str:
     """Current UTC time to the second, in the spelling the bundle carries."""
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _clean_workspace(workspace: Path) -> None:
+    """Remove the worktree, best-effort and idempotent."""
+    if workspace.exists():
+        shutil.rmtree(workspace)
+
+
+def clean_room(diff: TaskDiff) -> None:
+    """Remove the worktree a volunteer run built.
+
+    Called after a refusal to clean up the runner's output, so that a donor's
+    machine is left clean regardless of whether the run passed or failed.  The
+    worktree is the runner's output, not the program's -- the output is the
+    signed bundle or the refusal record -- and discarding it here keeps the two
+    separate.
+
+    Idempotent: safe to call more than once on the same diff.
+
+    Args:
+        diff: The run's result from :func:`~bernstein.core.volunteer.runner.run_claimed_task`.
+    """
+    worktree_path = diff.worktree_path
+    if worktree_path.exists():
+        shutil.rmtree(worktree_path)
