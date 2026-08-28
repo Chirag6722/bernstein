@@ -61,6 +61,9 @@ The emitter:
 - Maps events to TRACE 0.2 claims (run_id, event_count, head hash, timestamps)
 - Signs with the install identity via existing signing infrastructure
 - Returns canonical JSON via json.dumps(..., sort_keys=True, separators=(",", ":"))
+- Signs over a *different* canonicalisation: the pre-image is JCS (RFC 8785),
+  not the returned document. A verifier must re-canonicalise the signed body
+  with JCS rather than hashing the bytes it received
 - Uses import guards to avoid pulling agentrust_trace when [trace] extra is absent
 
 Public surface:
@@ -342,12 +345,10 @@ class TrustRecordEmitter:
             "claims": record.claims,
         }
 
-        # Canonical bytes: sorted keys, minimal separators
-        canonical_bytes = json.dumps(
-            body,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        # Canonical bytes: use JCS per RFC 8785 (UTF-16 code-unit sorting for property names)
+        from bernstein.core.security.agent_card_signer import canonicalize_jcs
+
+        canonical_bytes = canonicalize_jcs(body)
 
         # Sign using existing infrastructure (Ed25519 via sign_detached_jws_over_canonical)
         private_key_pem = self._get_private_key_pem()
