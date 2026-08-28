@@ -3287,8 +3287,51 @@ class Orchestrator:
             logger.warning("Failed to seal journal head into lineage spine: %s", sanitize_log(str(exc)))
             logger.warning("Run receipt not written for run %s: journal-head seal failed", self._run_id)
         else:
+            # Here rather than beside the seal call above: the receipt binds
+            # the spine head as it stands when the receipt is built, so rows
+            # appended after the seal are still covered -- the intent-capsule
+            # seal already relies on that. Inside the try, a provenance
+            # failure would be reported as a seal failure and would withhold
+            # the receipt, which inverts what each one is worth.
+            self._record_run_branch_provenance(hmac_key)
             self._seal_intent_capsules(hmac_key)
             self._write_run_receipt()
+
+    def _record_run_branch_provenance(self, hmac_key: bytes) -> None:
+        """Record a lineage row per path this run's branch added (issue #2789).
+
+        The merge boundary in ``spawner_merge`` covers work that arrives
+        through the orchestrator's own merge. Work also reaches a run branch
+        by direct commit and by a supervisor folding a worktree in outside
+        the orchestrator, and a hook on the merge alone leaves those runs
+        with a spine holding nothing the run produced -- the same shape of
+        gap, one path over.
+
+        Failures are logged, never raised: the branch is durable in git and
+        every row is re-derivable from it, so a provenance write that fails
+        must not fail a run that already completed.
+        """
+        try:
+            from bernstein.core.git.git_basic import is_git_repo, resolve_default_branch
+            from bernstein.core.lineage.merge_provenance import record_run_branch_artifacts
+
+            # A workdir that is not a work tree has no branch to read, so
+            # there is nothing to record. Stating that here keeps every such
+            # run from spawning git only to have it fail, and from logging a
+            # warning about a condition that is ordinary rather than wrong.
+            if not is_git_repo(self._workdir):
+                return
+
+            record_run_branch_artifacts(
+                worktree_root=self._workdir,
+                actor="orchestrator",
+                lineage_root=self._workdir / ".sdd" / "lineage",
+                run_id=self._run_id,
+                hmac_key=hmac_key,
+                default_branch=resolve_default_branch(self._workdir),
+            )
+        except Exception as exc:
+            logger.warning("Run-branch provenance not recorded for run %s: %s", self._run_id, sanitize_log(str(exc)))
 
     def _write_run_receipt(self) -> None:
         """Write the signed run receipt at finalization (issue #2924).
