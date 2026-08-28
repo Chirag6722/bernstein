@@ -104,10 +104,20 @@ def _overlap_stub(
     stub = SimpleNamespace(
         _file_ownership=file_ownership or {},
         _agents=agents or {},
+        _batch_sessions={},
+        _task_to_session={},
         _lock_manager=lock_manager,
+        _loop_detector=MagicMock(),
     )
     stub._check_file_overlap = MethodType(
         Orchestrator._check_file_overlap,  # type: ignore[arg-type]
+        stub,
+    )
+    # The real resolver, not a stand-in: recording a wait under one key and
+    # clearing it under another is exactly the bug this attribution guards
+    # against, and a fake here would agree with whatever it was handed.
+    stub.resolve_waiting_agent = MethodType(
+        Orchestrator.resolve_waiting_agent,  # type: ignore[arg-type]
         stub,
     )
     return stub
@@ -147,7 +157,7 @@ def test_check_file_overlap_dead_agent_does_not_block() -> None:
 
 
 def test_check_file_overlap_persistent_lock_returns_true() -> None:
-    lock = SimpleNamespace(agent_id="ghost", task_id="T-old")
+    lock = SimpleNamespace(agent_id="ghost", task_id="T-old", locked_at=100.0)
     stub = _overlap_stub(lock_conflicts=[("src/locked.py", lock)])
     assert stub._check_file_overlap([_task_with_files("T-1", ["src/locked.py"])]) is True
     stub._lock_manager.check_conflicts.assert_called_once_with(["src/locked.py"])
@@ -156,6 +166,37 @@ def test_check_file_overlap_persistent_lock_returns_true() -> None:
 def test_check_file_overlap_no_owner_no_lock_returns_false() -> None:
     stub = _overlap_stub(file_ownership={}, agents={})
     assert stub._check_file_overlap([_task_with_files("T-1", ["src/free.py"])]) is False
+
+
+def test_check_file_overlap_records_wait_with_real_holder_ids() -> None:
+    session = AgentSession(id="A-1", role="backend")
+    session.status = "working"
+
+    # We create an agent A-2 which requests this task.
+    session_waiting = AgentSession(id="A-2", role="backend", task_ids=["T-parent"])
+    session_waiting.status = "working"
+
+    lock = SimpleNamespace(agent_id="ghost", task_id="T-old", locked_at=100.0)
+    stub = _overlap_stub(
+        file_ownership={"src/a.py": "A-1"},
+        agents={"A-1": session, "A-2": session_waiting},
+        lock_conflicts=[("src/locked.py", lock)],
+    )
+
+    stub._loop_detector = MagicMock()
+
+    # Task has parent_task_id which belongs to A-2
+    task = _task_with_files("T-1", ["src/a.py", "src/locked.py"])
+    task.parent_task_id = "T-parent"
+
+    assert stub._check_file_overlap([task]) is True
+
+    stub._loop_detector.record_lock_wait.assert_called_once_with(
+        waiting_agent_id="A-2",
+        wanted_files=["src/a.py", "src/locked.py"],
+        held_by={"src/a.py": "A-1", "src/locked.py": "ghost"},
+        lock_timestamps={"ghost": 100.0},
+    )
 
 
 # ---------------------------------------------------------------------------

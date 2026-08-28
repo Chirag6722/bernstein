@@ -4875,6 +4875,10 @@ class Orchestrator:
         if not all_files:
             return False
 
+        held_by: dict[str, str] = {}
+        lock_timestamps: dict[str, float] = {}
+        conflict = False
+
         # In-memory ownership check - filters out dead agents explicitly.
         for fpath in all_files:
             owner_id = self._file_ownership.get(fpath)
@@ -4886,7 +4890,8 @@ class Orchestrator:
                         fpath,
                         owner_id,
                     )
-                    return True
+                    held_by[fpath] = owner_id
+                    conflict = True
 
         # Persistent lock check (survives crashes via FileLockManager TTL).
         conflicts = self._lock_manager.check_conflicts(all_files)
@@ -4898,8 +4903,48 @@ class Orchestrator:
                     lock.agent_id,
                     lock.task_id,
                 )
+                held_by[fpath] = lock.agent_id
+                lock_timestamps[lock.agent_id] = min(lock.locked_at, lock_timestamps.get(lock.agent_id, lock.locked_at))
+                conflict = True
+
+        if conflict:
+            detector = self._loop_detector
+            if detector:
+                waiting_agent = self.resolve_waiting_agent(batch[0].parent_task_id if batch else None)
+                if waiting_agent:
+                    detector.record_lock_wait(
+                        waiting_agent_id=waiting_agent,
+                        wanted_files=all_files,
+                        held_by=held_by,
+                        lock_timestamps=lock_timestamps if lock_timestamps else None,
+                    )
             return True
+
         return False
+
+    def resolve_waiting_agent(self, parent_task_id: str | None) -> str | None:
+        """Return the agent id waiting on ``parent_task_id``, or ``None``.
+
+        Recording a wait and clearing it must key on the same id, or the
+        wait-for graph keeps an entry nothing can ever remove -- the leak
+        this wiring exists to avoid. One resolver, called from both sides,
+        is what keeps them from drifting apart.
+
+        Returns ``None`` rather than substituting a task id when no agent
+        owns the task: a task id can never close a cycle in a graph whose
+        every target is an agent id, so an invented node is a permanent
+        non-participant, not a conservative default.
+        """
+        if not parent_task_id:
+            return None
+        owner = self._task_to_session.get(parent_task_id)
+        if owner:
+            return owner
+        for sessions in (self._agents, self._batch_sessions):
+            for session in sessions.values():
+                if parent_task_id in session.task_ids:
+                    return session.id
+        return None
 
     def _should_auto_decompose(self, task: Task) -> bool:
         """Delegate to task_lifecycle.should_auto_decompose."""

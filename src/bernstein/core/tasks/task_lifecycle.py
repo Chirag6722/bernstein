@@ -2629,6 +2629,18 @@ def claim_and_spawn_batches(
                     break
                 _clear_claim_conflict_state(orch, task.id)
                 claimed_tasks.append(task)
+                # getattr, not attribute access: this module takes an
+                # orchestrator-shaped object, and the ``if`` below already
+                # states that a missing detector is a valid state. The
+                # Orchestrator's own call site reads the attribute directly,
+                # so a rename still fails loudly where the field lives.
+                detector = getattr(orch, "_loop_detector", None)
+                if detector:
+                    # Same resolver the wait was recorded with: keying the
+                    # clear differently is how an entry outlives the agent.
+                    waiting_agent = orch.resolve_waiting_agent(task.parent_task_id)
+                    if waiting_agent:
+                        detector.clear_wait(waiting_agent)
             except httpx.TransportError as exc:
                 logger.error(
                     "Server unreachable claiming task %s: %s -- aborting spawn",
