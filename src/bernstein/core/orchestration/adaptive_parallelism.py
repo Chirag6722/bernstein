@@ -14,12 +14,15 @@ Rules:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from bernstein.core.defaults import PARALLELISM
+from bernstein.core.orchestration.controller_state import AdaptiveParallelismState
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +231,89 @@ class AdaptiveParallelism:
             self._current_max = min_agents
 
         return self._current_max
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a serialisable dict of internal state for sidecar persistence.
+
+        Returns:
+            Dict containing ``configured_max``, ``current_max``,
+            ``slo_constrained_max``, ``last_adjustment_reason``, and
+            ``low_error_since_epoch`` (``None`` when unset).
+        """
+        return {
+            "configured_max": self.configured_max,
+            "current_max": self._current_max,
+            "slo_constrained_max": self._slo_constrained_max,
+            "last_adjustment_reason": self._last_adjustment_reason,
+            "low_error_since_epoch": self._low_error_since,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], configured_max: int | None = None) -> AdaptiveParallelism:
+        """Reconstruct an instance from a sidecar-persisted dict.
+
+        Args:
+            data: Dict as produced by :meth:`to_dict`.
+            configured_max: Override the configured max if the caller
+                needs to enforce a different cap (e.g. after config
+                reload). ``None`` reads from ``data["configured_max"]``.
+
+        Returns:
+            A new ``AdaptiveParallelism`` whose runtime state matches
+            the persisted snapshot. The outcome window is intentionally
+            empty — the restored instance starts fresh from the state
+            snapshot without carrying over stale task outcomes.
+        """
+        ap = cls(configured_max=configured_max or data.get("configured_max", 1))
+        ap._current_max = int(data.get("current_max", ap.configured_max))
+        ap._slo_constrained_max = data.get("slo_constrained_max")
+        if "last_adjustment_reason" in data:
+            ap._last_adjustment_reason = str(data["last_adjustment_reason"])
+        low_error_since = data.get("low_error_since_epoch")
+        if low_error_since is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                ap._low_error_since = float(low_error_since)
+        return ap
+
+    def to_adaptive_parallelism_state(self) -> AdaptiveParallelismState:
+        """Convert this instance to a ``AdaptiveParallelismState`` for sidecar persistence.
+
+        Returns:
+            An ``AdaptiveParallelismState`` snapshot with the same field values
+            as :meth:`to_dict` (for compatibility with ``from_dict``), but
+            returned as a dataclass so callers can pass it directly to
+            ``controller_state.save`` without an extra dict round-trip.
+        """
+        return AdaptiveParallelismState(
+            configured_max=self.configured_max,
+            current_max=self._current_max,
+            slo_constrained_max=self._slo_constrained_max,
+            last_adjustment_reason=self._last_adjustment_reason,
+            low_error_since_epoch=self._low_error_since,
+        )
+
+    @classmethod
+    def from_adaptive_parallelism_state(
+        cls, state: AdaptiveParallelismState, configured_max: int | None = None
+    ) -> AdaptiveParallelism:
+        """Reconstruct an instance from an ``AdaptiveParallelismState`` dataclass.
+
+        Args:
+            state: The persisted state dataclass.
+            configured_max: Override the configured max if the caller
+                needs to enforce a different cap. ``None`` reads from
+                ``state.configured_max``.
+
+        Returns:
+            A new ``AdaptiveParallelism`` whose runtime state matches the
+            persisted snapshot. The outcome window is intentionally empty.
+        """
+        ap = cls(configured_max=configured_max or state.configured_max)
+        ap._current_max = state.current_max
+        ap._slo_constrained_max = state.slo_constrained_max
+        ap._last_adjustment_reason = state.last_adjustment_reason
+        ap._low_error_since = state.low_error_since_epoch
+        return ap
 
     def status(self) -> AdaptiveParallelismStatus:
         """Return current status for dashboards and metrics."""
