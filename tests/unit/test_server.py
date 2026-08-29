@@ -1902,7 +1902,7 @@ def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     record1 = json.dumps({"role": "backend", "cost_usd": 0.10}) + "\n"
     metrics_jsonl.write_bytes(record1.encode())
 
-    mtime1 = metrics_jsonl.stat().st_mtime + 1
+    mtime1 = 1_700_000_000.0
     os.utime(metrics_jsonl, (mtime1, mtime1))
     store._cost_cache_mtime = 0.0  # force miss
 
@@ -1916,7 +1916,7 @@ def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     with metrics_jsonl.open("ab") as fh:
         fh.write(record2.encode())
 
-    mtime2 = metrics_jsonl.stat().st_mtime + 1
+    mtime2 = 1_700_000_100.0
     os.utime(metrics_jsonl, (mtime2, mtime2))
     store._cost_cache_mtime = mtime1  # simulate prior cached mtime
 
