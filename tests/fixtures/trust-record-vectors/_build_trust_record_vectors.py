@@ -187,11 +187,39 @@ def main() -> None:
         child_path.write_text(child_output + "\n", encoding="utf-8")
         print(f"Wrote delegated-child vector: {child_path}  ({len(child_output)} bytes)")
 
-        # 3. Run-level aggregate: rolls up the parent + child execution
-        # records under one run-scoped record (issue #4763). Built from the
-        # two already-minted member records, not from a journal -- there is
-        # no journal for "the whole run" as such.
-        aggregate_output = emitter.emit_aggregate_trust_record(run_id, [parent_output, child_output])
+        # 2b. Grandchild hop: extends the delegation chain to depth 2 so the
+        # depth_exceeded rule has a bound to cross (issue #4782). Carries a
+        # data_class narrowed below the child's, so data_class_widened has a
+        # change of direction to detect rather than an absence of values.
+        grandchild_journal = EventJournal("trust-record-vector-grandchild", sdd_dir)
+        grandchild_journal.record(
+            "run_started",
+            role="backend",
+            model_provider="anthropic",
+            model_id="claude-haiku-5",
+            data_class="restricted",
+            gate_config={"rules": ["deny-network"], "version": 1},
+        )
+        grandchild_journal.record("run_completed", status="ok")
+
+        grandchild_output = emitter.emit_trust_record(
+            grandchild_journal.path,
+            run_id,
+            "trust-record-vector-grandchild",
+            parent_record=child_output,
+            credential_id="trust-record-vector-delegation-credential:scope=restricted",
+        )
+        grandchild_path = OUT_DIR / "delegated-grandchild-trust-record.json"
+        grandchild_path.write_text(grandchild_output + "\n", encoding="utf-8")
+        print(f"Wrote delegated-grandchild vector: {grandchild_path}  ({len(grandchild_output)} bytes)")
+
+        # 3. Run-level aggregate: rolls up the parent + child + grandchild
+        # execution records under one run-scoped record (issue #4763, #4782).
+        # Built from the three already-minted member records, not from a
+        # journal -- there is no journal for "the whole run" as such. Extended
+        # to cover all three hops so the aggregate's references[] surface
+        # exercises the full delegation chain, not just the first two hops.
+        aggregate_output = emitter.emit_aggregate_trust_record(run_id, [parent_output, child_output, grandchild_output])
         aggregate_path = OUT_DIR / "aggregate-trust-record.json"
         aggregate_path.write_text(aggregate_output + "\n", encoding="utf-8")
         print(f"Wrote run-level aggregate vector: {aggregate_path}  ({len(aggregate_output)} bytes)")

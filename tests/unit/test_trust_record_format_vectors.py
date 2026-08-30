@@ -27,6 +27,7 @@ _VECTORS = _REPO_ROOT / "tests" / "fixtures" / "trust-record-vectors"
 _SOLO = _VECTORS / "single-execution-trust-record.json"
 _PARENT = _VECTORS / "delegated-parent-trust-record.json"
 _CHILD = _VECTORS / "delegated-child-trust-record.json"
+_GRANDCHILD = _VECTORS / "delegated-grandchild-trust-record.json"
 _AGGREGATE = _VECTORS / "aggregate-trust-record.json"
 _PUBKEY = _VECTORS / "trust-record-vectors-key.pem"
 
@@ -231,11 +232,11 @@ def test_aggregate_vector_subject_is_run_scoped_not_execution_scoped() -> None:
 def test_aggregate_vector_has_one_member_execution_reference_per_member_no_other_rel() -> None:
     doc = _load(_AGGREGATE)
     rels = [r["rel"] for r in doc["references"]]
-    assert rels == ["member-execution", "member-execution"]
+    assert rels == ["member-execution", "member-execution", "member-execution"]
 
 
 def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vectors_by_hash() -> None:
-    """The generator gave the aggregate ``[parent_output, child_output]`` in
+    """The generator gave the aggregate ``[parent_output, child_output, grandchild_output]`` in
     that order -- each reference's ``digest`` must recompute to the
     corresponding committed member vector's own exact bytes.
 
@@ -248,14 +249,17 @@ def test_aggregate_vector_member_references_resolve_to_the_parent_and_child_vect
     aggregate = _load(_AGGREGATE)
     parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
     child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
+    grandchild_bytes = _GRANDCHILD.read_text(encoding="utf-8").rstrip("\n")
 
     parent_digest = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
     child_digest = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+    grandchild_digest = f"sha256:{hashlib.sha256(grandchild_bytes.encode('utf-8')).hexdigest()}"
 
-    assert [r["digest"] for r in aggregate["references"]] == [parent_digest, child_digest]
+    assert [r["digest"] for r in aggregate["references"]] == [parent_digest, child_digest, grandchild_digest]
     assert [r["id"] for r in aggregate["references"]] == [
         _load(_PARENT)["subject"],
         _load(_CHILD)["subject"],
+        _load(_GRANDCHILD)["subject"],
     ]
     for entry in aggregate["references"]:
         assert entry["resolver"]
@@ -294,7 +298,78 @@ def test_regenerating_the_vectors_is_byte_identical_to_the_committed_files() -> 
             "single-execution-trust-record.json",
             "delegated-parent-trust-record.json",
             "delegated-child-trust-record.json",
+            "delegated-grandchild-trust-record.json",
             "aggregate-trust-record.json",
         ):
             committed = (_VECTORS / name).read_bytes()
             assert first[name] == committed, f"{name} has drifted from the committed vector -- re-mint required"
+
+
+def test_chain_depth_at_least_two_hops() -> None:
+    """The committed delegation chain must be at least two hops deep when
+    walking delegation.parent_record_hash from the deepest record back
+    to a root. The grandchild adds a second hop over the original
+    parent->child pair (issue #4782).
+    """
+    grandchild = _load(_GRANDCHILD)
+    child = _load(_CHILD)
+    parent = _load(_PARENT)
+
+    # Compute each record's content hash from its bytes
+    child_bytes = _CHILD.read_text(encoding="utf-8").rstrip("\n")
+    child_hash = f"sha256:{hashlib.sha256(child_bytes.encode('utf-8')).hexdigest()}"
+
+    parent_bytes = _PARENT.read_text(encoding="utf-8").rstrip("\n")
+    parent_hash = f"sha256:{hashlib.sha256(parent_bytes.encode('utf-8')).hexdigest()}"
+
+    # Walk the chain: grandchild -> child -> parent
+    hop_count = 0
+
+    # Hop 1: grandchild's parent_record_hash must point to child's content hash
+    grandchild_parent_hash = grandchild["delegation"]["parent_record_hash"]
+    assert grandchild_parent_hash == child_hash, (
+        f"Grandchild's parent_record_hash {grandchild_parent_hash[-20:]}... "
+        f"does not match child's content hash {child_hash[-20:]}..."
+    )
+    hop_count += 1
+
+    # Hop 2: child's parent_record_hash must point to parent's content hash
+    child_parent_hash = child["delegation"]["parent_record_hash"]
+    assert child_parent_hash == parent_hash, (
+        f"Child's parent_record_hash {child_parent_hash[-20:]}... "
+        f"does not match parent's content hash {parent_hash[-20:]}..."
+    )
+    hop_count += 1
+
+    # Parent is the root of the chain (no delegation field)
+    assert "delegation" not in parent, "Parent should not have delegation field"
+
+    assert hop_count >= 2, f"Expected at least 2 hops in delegation chain, got {hop_count}"
+
+
+def test_data_class_narrowing_exists() -> None:
+    """At least one parent/child pair must have a strictly narrower data_class
+    on the child (e.g., 'internal' -> 'restricted'). The test loads all
+    delegated records and checks each pair for this narrowing pattern.
+
+    Semantics: 'public' is broadest, 'internal' is less broad, 'restricted'
+    is narrowest -- a narrow child data_class is a subset of the parent's
+    authority. The failure message names both the broader parent data_class
+    and the narrower child data_class actually present in the vectors.
+    """
+    parent = _load(_PARENT)
+    child = _load(_CHILD)
+    grandchild = _load(_GRANDCHILD)
+
+    pairs = [
+        ("parent-child", parent, child),
+        ("child-grandchild", child, grandchild),
+    ]
+    rank = {"public": 3, "internal": 2, "restricted": 1}
+
+    assert any(rank[child_rec["data_class"]] < rank[parent_rec["data_class"]] for _, parent_rec, child_rec in pairs), (
+        "No parent/child pair has a strictly narrower child data_class "
+        "(ranking: public > internal > restricted). Observed classes: "
+        f"parent-child {parent['data_class']} -> {child['data_class']}, "
+        f"child-grandchild {child['data_class']} -> {grandchild['data_class']}"
+    )
