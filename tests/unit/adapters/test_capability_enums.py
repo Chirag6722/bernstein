@@ -109,17 +109,17 @@ def test_default_adapter_strategy_is_conservative() -> None:
 
 
 def test_only_the_computer_use_family_declares_artifact_output_mode() -> None:
-    """The coding path stays the default; the axis has exactly one consumer.
+    """The coding path stays the default; only non-coding units of work opt out.
 
     ``computer_use`` fronts an external agent whose unit of work is the
-    signed per-action record, not a commit (#3110), so it declares
-    ``artifact``. ``holmesgpt`` is a read-only investigation CLI whose unit
-    of work is the conclusion artifact, not a commit (#3123), so it also
-    declares ``artifact``. Every coding adapter keeps ``git-diff`` - growing
-    this set is a deliberate act, not a default drift.
+    signed per-action record, not a commit (#3110); ``holmesgpt`` is a
+    read-only investigation CLI whose unit of work is the conclusion
+    artifact (#3123); ``skyvern`` drives a browser-automation server whose
+    unit of work is the run result, not a commit. Every coding adapter keeps
+    ``git-diff`` - growing this set is a deliberate act, not a default drift.
     """
     non_git_diff = {name for name, s in STRATEGY_MATRIX.items() if s.output_mode is not OutputMode.GIT_DIFF}
-    assert non_git_diff == {"computer_use", "holmesgpt"}
+    assert non_git_diff == {"computer_use", "holmesgpt", "skyvern"}
 
 
 def test_computer_use_declares_artifact_output_mode() -> None:
