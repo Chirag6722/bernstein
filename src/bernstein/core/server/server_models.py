@@ -93,6 +93,9 @@ def _ensure_task_enum(value: str, field_name: str) -> str:
     """
     from bernstein.core.tasks.models import Complexity, Scope, TaskType
 
+    # Explicitly annotate the variable so mypy knows it can be any of the three
+    enum_cls: type[Complexity] | type[Scope] | type[TaskType]
+
     if field_name == "complexity":
         enum_cls = Complexity
     elif field_name == "scope":
