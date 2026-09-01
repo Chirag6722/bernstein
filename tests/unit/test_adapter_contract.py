@@ -89,6 +89,21 @@ def _discover_registered_names() -> list[str]:
     )
 
 
+#: Adapters whose ``prompt`` argument is a structured descriptor rather than
+#: free-form instruction text. Only the *input shape* differs - every contract
+#: assertion still applies - so the spawn case is handed a prompt the adapter
+#: accepts instead of the adapter being dropped from the whole class. Excluding
+#: it would take the other twelve cases with it: garak went in by name and the
+#: suite lost thirteen collected cases in one commit. Keyed on ``adapter.name()``
+#: (the registry key), not on the class name the parametrize id carries.
+_CONTRACT_PROMPT: dict[str, str] = {
+    # garak's prompt IS the target descriptor (``--target <type>:<name>``); it
+    # refuses to spawn without one, which is the documented behaviour proved in
+    # tests/unit/test_adapter_garak.py.
+    "garak": "openai:gpt-4o",
+}
+
+
 def _make_factory(name: str) -> Any:
     """Build a zero-arg factory that instantiates a registered adapter."""
 
@@ -208,7 +223,7 @@ class TestAdapterContract:
 
         with patch(popen_target, side_effect=side):
             result = adapter.spawn(
-                prompt="test prompt",
+                prompt=_CONTRACT_PROMPT.get(adapter.name(), "test prompt"),
                 workdir=tmp_path,
                 model_config=ModelConfig(model="sonnet", effort="high"),
                 session_id="contract-test",
