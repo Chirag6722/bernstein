@@ -41,6 +41,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from bernstein.cli.commands.govern_cmd import govern_reconcile_cmd
 from bernstein.cli.helpers import console
 from bernstein.core.govern import compute_plan as _compute_plan
 from bernstein.core.lineage.spine import LineageSpine
@@ -722,6 +723,11 @@ def governance_ingest_cmd(
     console.print(f"  chain entry        {receipt.chain_entry_hash}")
     console.print(f"  coverage           {receipt.coverage}")
     console.print(f"  [dim]{receipt.coverage_detail}[/dim]")
+
+
+# Desired-state reconcile diff over the governed surface (#5085). Registered
+# here, before the alias mirror below, so the subcommand sets stay identical.
+govern_group.add_command(govern_reconcile_cmd, "reconcile")
 
 
 @click.group("governance")
