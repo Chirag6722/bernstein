@@ -359,7 +359,8 @@ def _build_findings_from_inventory(
     from bernstein.core.govern import Finding, FindingsDocument
 
     findings: list[Finding] = []
-    for raw_surface in inventory.get("surfaces", []):
+    raw_surfaces = cast("list[dict[str, Any]]", inventory.get("surfaces", []))
+    for raw_surface in raw_surfaces:
         surface_id = str(raw_surface.get("surface", ""))
         observed_value = str(raw_surface.get("observed_value", ""))
         evidence_ref = str(raw_surface.get("evidence_ref", ""))
@@ -382,7 +383,8 @@ def _build_findings_from_inventory(
 def _build_playbook_prompt(findings_dict: dict[str, object], seed: str | None) -> str:
     """Build the prompt sent to the model from the findings document."""
     findings_lines: list[str] = []
-    for f in findings_dict.get("findings", []):
+    raw_findings = cast("list[dict[str, Any]]", findings_dict.get("findings", []))
+    for f in raw_findings:
         readable_str = "readable" if f.get("readable") else "UNREADABLE"
         findings_lines.append(
             f"  - surface: {f['surface']}\n"
@@ -520,7 +522,8 @@ def govern_discover_cmd(
 
     console.print()
     console.print("[bold]Governance discover[/bold]")
-    console.print(f"  Findings: {len(findings_dict.get('findings', []))} surfaces")
+    finding_rows = cast("list[dict[str, Any]]", findings_dict.get("findings", []))
+    console.print(f"  Findings: {len(finding_rows)} surfaces")
     console.print(f"  Inventory hash: {inventory_hash}")
     console.print(f"  Findings hash: {findings_hash}")
     rel_path = findings_path.relative_to(root) if findings_path.is_relative_to(root) else findings_path
