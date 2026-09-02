@@ -9045,6 +9045,22 @@ EVENT_CAPABILITY_DELTA = "capability.delta_recorded"
 #: flipping any byte of the entry changes the chain HMAC.
 EVENT_CAPABILITY_AUTHORIZATION = "capability.authorization"
 
+#: Issue #5038 -- emitted whenever an operator admits a model for use by this
+#: installation. The event carries the canonical model key, the provider,
+#: model name and pinned version, the task classes the admission covers, the
+#: admitting identity, the expiry the admission lapses at, and an optional
+#: reference to the evidence the operator relied on. The model registry is a
+#: replay of these events and their withdrawals -- see
+#: :mod:`bernstein.core.routing.model_registry`.
+EVENT_MODEL_ADMITTED = "model.admitted"
+
+#: Issue #5038 -- emitted whenever an operator withdraws a previously admitted
+#: model. The event carries the same canonical model key plus the withdrawing
+#: identity and the stated reason. Withdrawal appends; it never edits or
+#: removes the admission it supersedes, so the state that held before it
+#: stays reconstructible.
+EVENT_MODEL_WITHDRAWN = "model.withdrawn"
+
 #: Issue #4975 -- emitted whenever an MCP server's advertised capability set
 #: changes between connections. The event carries the run id, the server name,
 #: previous capability digest (None for first contact), the current capability
