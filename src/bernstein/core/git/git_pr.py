@@ -437,7 +437,9 @@ def merge_with_conflict_detection(
             return MergeResult(success=True, conflicting_files=[], merge_diff=diff, merge_commit=commit_sha)
         # Nothing to commit (branches already identical)
         run_git(["merge", "--abort"], cwd, timeout=10)
-        return MergeResult(success=True, conflicting_files=[])
+        sha_r = run_git(["rev-parse", "HEAD"], cwd, timeout=10)
+        merge_commit = sha_r.stdout.strip() if sha_r.ok else ""
+        return MergeResult(success=True, conflicting_files=[], merge_commit=merge_commit)
 
     # 2. Check if the failure is due to merge conflicts
     conflicts = _parse_conflict_files(cwd)
