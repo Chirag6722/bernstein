@@ -151,3 +151,12 @@ The unified compliance control registry maps each control across frameworks:
 | `ISO-42001-A72` | Data for AI Systems & Lineage (A.7.2) | `finos_aigf: CTRL-DATA-LINEAGE`, `iso42001: A.7.2` | lineage_log, audit_chain | mapped |
 | `ISO-42001-A82` | Third-Party AI Components & Suppliers (A.8.2) | `finos_aigf: CTRL-MODEL-SUPPLY-CHAIN`, `iso42001: A.8.2` | attestation, audit_chain | mapped |
 
+## Signed Benchmark Bundles & OSCAL Export
+
+Evidence packs support embedding signed benchmark bundles (`bench_bundles`) keyed to compliance controls:
+
+- **Empirical Measurement**: Controls measured by a signed benchmark suite are annotated in `controls.json` with `status: "measured"`, pass rate, score, and suite version. Unmeasured controls are marked `declared-not-measured` with explicit reasons.
+- **NIST OSCAL 1.0.0 Export**: Packs automatically embed `oscal/assessment-results.json` containing deterministic NIST OSCAL 1.0.0 assessment-results objects mapping findings and states (`satisfied`, `not-satisfied`, `not-tested`, `not-applicable`) to regulatory controls.
+- **Offline Pack Verification**: `verify_evidence_pack(zip_path)` re-hashes every bundle member, validates detached Ed25519 bundle signatures, and verifies per-task run receipts against stored hashes.
+
+

@@ -444,6 +444,56 @@ _CANONICAL_CONTROLS: tuple[ControlEntry, ...] = (
         references={"eu_ai_act": "Article 73", "finos_aigf": "CTRL-INCIDENT-RESPONSE"},
         evidence_kinds=("incident_pack", "audit_chain"),
     ),
+    # --- EU AI Act Clause IDs (Direct Map) ---
+    ControlEntry(
+        control_id="art-12(1)",
+        title="Automatic Recording of Events (Article 12(1))",
+        description="Automatic recording of events over the lifetime of the system.",
+        references={"eu_ai_act": "Article 12(1)", "finos_aigf": "CTRL-AUDIT-TRAIL"},
+        evidence_kinds=("audit_chain", "receipt"),
+    ),
+    ControlEntry(
+        control_id="art-12(2)(a)",
+        title="Risk Situation Identification (Article 12(2)(a))",
+        description="Identification of situations presenting a risk per Article 79(1).",
+        references={"eu_ai_act": "Article 12(2)(a)"},
+        evidence_kinds=("audit_chain",),
+    ),
+    ControlEntry(
+        control_id="art-12(2)(b)",
+        title="Post-Market Monitoring Facilitation (Article 12(2)(b))",
+        description="Facilitation of post-market monitoring (Article 72).",
+        references={"eu_ai_act": "Article 12(2)(b)"},
+        evidence_kinds=("data_catalog",),
+    ),
+    ControlEntry(
+        control_id="art-12(2)(c)",
+        title="Operation Monitoring (Article 12(2)(c))",
+        description="Monitoring of operation under Article 26(5).",
+        references={"eu_ai_act": "Article 12(2)(c)"},
+        evidence_kinds=("audit_chain",),
+    ),
+    ControlEntry(
+        control_id="art-12(3)",
+        title="Log Retention (Article 12(3))",
+        description="Logs kept at least 6 months; 10 years for high-risk systems under Article 19(1).",
+        references={"eu_ai_act": "Article 12(3)", "finos_aigf": "CTRL-RETENTION"},
+        evidence_kinds=("retention_manifest",),
+    ),
+    ControlEntry(
+        control_id="art-13",
+        title="Deployer Transparency (Article 13)",
+        description="Transparency to deployers - cost + model attribution per task.",
+        references={"eu_ai_act": "Article 13"},
+        evidence_kinds=("cost_history",),
+    ),
+    ControlEntry(
+        control_id="art-15(1)",
+        title="Accuracy, Robustness and Cybersecurity (Article 15(1))",
+        description="Accuracy, robustness and cybersecurity - evidence via lineage chain.",
+        references={"eu_ai_act": "Article 15(1)"},
+        evidence_kinds=("lineage_log", "benchmark_bundle"),
+    ),
     # --- ISO/IEC 42001 Annex A Controls ---
     ControlEntry(
         control_id="ISO-42001-A628",
