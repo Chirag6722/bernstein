@@ -93,9 +93,7 @@ class ToolSurfaceReplayAdapter:
             self._manifests = fixture_manifests
         else:
             manifest_list = get_tool_surface_fixtures()
-            self._manifests = {
-                f"tool_surface_{m.server_id}": m for m in manifest_list
-            }
+            self._manifests = {f"tool_surface_{m.server_id}": m for m in manifest_list}
             # Also index by plain server_id
             for m in manifest_list:
                 self._manifests[m.server_id] = m

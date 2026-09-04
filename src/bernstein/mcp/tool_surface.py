@@ -103,8 +103,7 @@ class ServerManifest:
     def from_yaml(cls, path_or_content: str | Path) -> ServerManifest:
         """Load a ServerManifest from a YAML file path or YAML string."""
         if isinstance(path_or_content, Path) or (
-            isinstance(path_or_content, str)
-            and ("\n" not in path_or_content and Path(path_or_content).is_file())
+            isinstance(path_or_content, str) and ("\n" not in path_or_content and Path(path_or_content).is_file())
         ):
             content = Path(path_or_content).read_text(encoding="utf-8")
         else:
@@ -286,9 +285,7 @@ def is_approval_forced(
         receipt = evaluate_tool_surface_risk(receipt_or_manifest)
 
     server_id = receipt.server_id
-    risk_class_val = (
-        receipt.risk_class.value if isinstance(receipt.risk_class, RiskClass) else str(receipt.risk_class)
-    )
+    risk_class_val = receipt.risk_class.value if isinstance(receipt.risk_class, RiskClass) else str(receipt.risk_class)
 
     if receipt.forced_approval:
         if not approver_configured:

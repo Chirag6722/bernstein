@@ -402,6 +402,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `server.py`           | Bernstein MCP server |
 | `signal_paths.py`     | Containment barrier for the MCP shutdown-signal path |
 | `streaming.py`        | In-flight tool-call tracking with cancellation and partial-result preservation |
+| `tool_surface.py`     | Tool surface risk scoring and capability receipts for MCP servers |
 | `resources/`          | MCP resource registrars for Bernstein |
 | `tool_schemas/`       | tool_schemas/ sub-package |
 
