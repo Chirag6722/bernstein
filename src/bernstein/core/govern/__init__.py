@@ -53,6 +53,12 @@ from bernstein.core.govern.remediation import (
     UnremediatedFinding,
     collect_remediation,
 )
+from bernstein.core.govern.restore import (
+    RestoreEntry,
+    RestorePlan,
+    RestoreRefusal,
+    build_restore_plan,
+)
 
 
 def compute_plan(
@@ -259,10 +265,14 @@ __all__ = [
     "RemediationAction",
     "RemediationProposal",
     "RemediationStep",
+    "RestoreEntry",
+    "RestorePlan",
+    "RestoreRefusal",
     "Snapshot",
     "SnapshotEntity",
     "Surface",
     "UnremediatedFinding",
+    "build_restore_plan",
     "collect_remediation",
     "compute_plan",
     "compute_reconcile_diff",
