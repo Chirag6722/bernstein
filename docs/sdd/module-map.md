@@ -126,6 +126,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `codex.py`                  | OpenAI Codex CLI adapter |
 | `codex_cloudflare.py`       | Codex adapter driving Cloudflare's first-party sandbox bridge (issue #2969) |
 | `cody.py`                   | Sourcegraph Cody CLI adapter |
+| `compliant.py`              | Compliant eval adapter that executes every instruction literally and never declines (#5449) |
 | `composio.py`               | Composio Agent Orchestrator (``ao``) CLI adapter |
 | `computer_use.py`           | Browser / computer-use adapter family (#2606) |
 | `conformance.py`            | Adapter tool contract conformance suite harness |
@@ -306,7 +307,7 @@ Full per-file module map. `AGENTS.md`'s own "Module map" section links here inst
 | `trajectory_receipt_projection.py` | COSE / in-toto DSSE / RFC 6962 transparency projection for trajectory receipts |
 | `vcr_fixture.py`                   | VCR fixture pattern - dehydrate/hydrate deterministic test fixtures (T805) |
 | `yaml_runner.py`                   | YAML eval harness - operator-runnable spec format with judge and golden diff |
-| `bench/`                           | bernstein-bench: runnable, reproducibility-gated evaluation harness |
+| `bench/`                           | Sub-package: authority_levels, authority_suite, authority_tasks_data, bench_cli, bundle, golden_suite (+6 more) |
 | `cases/`                           | cases/ sub-package |
 | `golden_data/`                     | Packaged golden benchmark fixtures (ships in wheel via package-data) |
 
