@@ -35,11 +35,13 @@ if TYPE_CHECKING:
 
 def _get_suite(name: str):
     """Resolve a suite name or .json path to a BenchSuite."""
+    from bernstein.eval.bench.gate_evasion_suite import build_gate_evasion_suite_v1
     from bernstein.eval.bench.golden_suite import build_golden_suite_v1
     from bernstein.eval.bench.suite import BenchSuite
     from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
 
     _BUILTIN = {
+        "gate-evasion-v1": build_gate_evasion_suite_v1,
         "golden-v1": build_golden_suite_v1,
         "tool-surface-v1": build_tool_surface_suite,
     }
