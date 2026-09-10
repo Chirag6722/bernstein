@@ -435,3 +435,100 @@ class TestLambdaPenaltyIsCoveredByTheBundleHash:
         explicit._bundle_hash = None
 
         assert explicit.bundle_hash() == default.bundle_hash()
+
+
+class TestSkippedTasksLeaveEveryDenominator:
+    """`bundle.py` must agree with `metrics.py` on skipped tasks (#5567 review).
+
+    `benchmarks/swe_bench/metrics.py` excludes `status == "skipped"` from every
+    denominator (`non_skipped = total - skipped`). `SubmissionBundle` had no
+    notion of a skipped task at all, so one was scored as a wrong answer by
+    `wrong_count` and inflated the denominators of `resolve_rate`,
+    `expected_value` and `brier_score`.
+    """
+
+    @staticmethod
+    def _r(task_id: str, *, passed: bool = False, abstained: bool = False, skipped: bool = False) -> TaskResult:
+        return TaskResult(
+            task_id=task_id,
+            task_hash="h",
+            receipt={},
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            abstained=abstained,
+            skipped=skipped,
+        )
+
+    def _bundle(self, results: list[TaskResult]) -> SubmissionBundle:
+        return SubmissionBundle(
+            suite_hash="suite-hash",
+            suite_version="1.0.0",
+            submitted_at="2026-01-01T00:00:00Z",
+            scheduler_config={"parallelism": 1},
+            task_results=results,
+        )
+
+    def test_a_skipped_task_is_not_a_wrong_answer(self) -> None:
+        bundle = self._bundle([self._r("a", passed=True), self._r("b", skipped=True)])
+
+        assert bundle.wrong_count == 0
+        assert bundle.skipped_count == 1
+        assert bundle.evaluated_count == 1
+
+    def test_skipped_tasks_leave_every_denominator(self) -> None:
+        bundle = self._bundle(
+            [
+                self._r("a", passed=True),
+                self._r("b"),
+                self._r("c", abstained=True),
+                self._r("d", skipped=True),
+            ]
+        )
+
+        assert bundle.attempted_count == 2       # 3 evaluated - 1 abstained
+        assert bundle.resolve_rate == 0.5        # 1 resolved / 2 attempted
+        assert abs(bundle.abstain_rate - 1 / 3) < 1e-9
+        assert bundle.expected_value == 0.0      # (1 - 1) / 3 evaluated
+
+    def test_it_agrees_with_the_swe_bench_aggregator(self) -> None:
+        """The two scorers must not disagree about the same run."""
+        bundle = self._bundle(
+            [
+                self._r("a", passed=True),
+                self._r("b"),
+                self._r("c", abstained=True),
+                self._r("d", skipped=True),
+            ]
+        )
+        summary = aggregate(
+            [
+                InstanceResult(
+                    instance_id=i,
+                    scenario_name="s",
+                    status=status,
+                    resolved=(status == "resolved"),
+                    wall_time_s=1.0,
+                    total_tokens=1,
+                    total_cost_usd=0.0,
+                )
+                for i, status in (("a", "resolved"), ("b", "failed"), ("c", "abstained"), ("d", "skipped"))
+            ]
+        )
+
+        assert bundle.resolve_rate == summary.resolve_rate
+        assert abs(bundle.abstain_rate - summary.abstain_rate) < 1e-9
+        assert abs(bundle.expected_value - summary.expected_value) < 1e-9
+
+    def test_an_entirely_skipped_bundle_does_not_divide_by_zero(self) -> None:
+        bundle = self._bundle([self._r("a", skipped=True), self._r("b", skipped=True)])
+
+        assert bundle.evaluated_count == 0
+        assert bundle.resolve_rate == 0.0
+        assert bundle.expected_value == 0.0
+        assert bundle.brier_score == 0.0
+
+    def test_a_bundle_with_nothing_skipped_keeps_the_hash_it_had(self) -> None:
+        """`skipped` is omitted from `to_dict` when False, as `lambda_penalty` is."""
+        result = self._r("a", passed=True)
+
+        assert "skipped" not in result.to_dict()

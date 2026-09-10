@@ -65,6 +65,10 @@ class TaskResult:
     abstention_reason: str = ""
     # Declared confidence probability in [0.0, 1.0].
     confidence: float = 1.0
+    # The task was not evaluated at all -- excluded from every denominator,
+    # mirroring ``InstanceStatus == "skipped"`` in benchmarks/swe_bench/metrics.py.
+    # A skipped task is not a wrong answer and must not be scored as one.
+    skipped: bool = False
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -96,6 +100,10 @@ class TaskResult:
             "abstention_reason": self.abstention_reason,
             "confidence": self.confidence,
         }
+        # Omitted when False so every bundle written before this field existed
+        # hashes exactly as it did (same rule as ``lambda_penalty``).
+        if self.skipped:
+            d["skipped"] = True
         return d
 
 
@@ -190,19 +198,28 @@ class SubmissionBundle:
 
     @property
     def abstained_count(self) -> int:
-        return sum(1 for r in self.task_results if r.abstained)
+        return sum(1 for r in self.task_results if r.abstained and not r.skipped)
+
+    @property
+    def skipped_count(self) -> int:
+        return sum(1 for r in self.task_results if r.skipped)
+
+    @property
+    def evaluated_count(self) -> int:
+        """Tasks that were actually run: everything but the skipped ones."""
+        return len(self.task_results) - self.skipped_count
 
     @property
     def resolved_count(self) -> int:
-        return sum(1 for r in self.task_results if r.passed and not r.abstained)
+        return sum(1 for r in self.task_results if r.passed and not r.abstained and not r.skipped)
 
     @property
     def wrong_count(self) -> int:
-        return sum(1 for r in self.task_results if not r.passed and not r.abstained)
+        return sum(1 for r in self.task_results if not r.passed and not r.abstained and not r.skipped)
 
     @property
     def attempted_count(self) -> int:
-        return len(self.task_results) - self.abstained_count
+        return self.evaluated_count - self.abstained_count
 
     @property
     def resolve_rate(self) -> float:
@@ -213,10 +230,10 @@ class SubmissionBundle:
 
     @property
     def abstain_rate(self) -> float:
-        """Abstain rate: abstained / total."""
-        if not self.task_results:
+        """Abstain rate: abstained / evaluated (skipped tasks excluded)."""
+        if self.evaluated_count <= 0:
             return 0.0
-        return self.abstained_count / len(self.task_results)
+        return self.abstained_count / self.evaluated_count
 
     @property
     def confident_error_rate(self) -> float:
@@ -229,19 +246,25 @@ class SubmissionBundle:
     @property
     def expected_value(self) -> float:
         """Expected value under lambda penalty: (resolved * 1.0 + abstained * 0.0 + wrong * -lambda) / total."""
-        if not self.task_results:
+        if self.evaluated_count <= 0:
             return 0.0
         total_ev = self.resolved_count * 1.0 + self.abstained_count * 0.0 + self.wrong_count * (-self.lambda_penalty)
-        return total_ev / len(self.task_results)
+        return total_ev / self.evaluated_count
 
     @property
     def brier_score(self) -> float:
-        """Brier score over predicted confidence vs binary outcome."""
-        if not self.task_results:
-            return 0.0
+        """Brier score over predicted confidence vs binary outcome.
+
+        Skipped tasks carry no outcome to be wrong about, so they are left
+        out of the mean rather than scored against a fabricated one.
+        """
         squared_errors = [
-            (r.confidence - (1.0 if r.passed and not r.abstained else 0.0)) ** 2 for r in self.task_results
+            (r.confidence - (1.0 if r.passed and not r.abstained else 0.0)) ** 2
+            for r in self.task_results
+            if not r.skipped
         ]
+        if not squared_errors:
+            return 0.0
         return sum(squared_errors) / len(squared_errors)
 
     # ------------------------------------------------------------------
@@ -338,6 +361,7 @@ class SubmissionBundle:
                 abstained=r.get("abstained", False),
                 abstention_reason=r.get("abstention_reason", ""),
                 confidence=r.get("confidence", 1.0),
+                skipped=r.get("skipped", False),
             )
             for r in raw["task_results"]
         ]
