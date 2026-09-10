@@ -439,6 +439,52 @@ def bench_reliability_check(receipt: str, suite: str, task_id: str | None, attem
 
 
 # ---------------------------------------------------------------------------
+# Compare submission bundles (issue #5567)
+# ---------------------------------------------------------------------------
+
+
+@bench_group.command(name="compare")
+@click.argument("a")
+@click.argument("b")
+@click.option(
+    "--penalty",
+    "--lambda",
+    "lambda_penalty",
+    type=float,
+    default=None,
+    help="Penalty parameter lambda for incorrect answers (wrong = -lambda). Defaults to 1.0 or bundle override.",
+)
+def bench_compare(a: str, b: str, lambda_penalty: float | None) -> None:
+    """Compare two submission bundles, ranking by expected value under lambda.
+
+    A and B are paths to submission bundle .json files.
+    """
+    from bernstein.eval.bench.bundle import SubmissionBundle
+
+    path_a, path_b = Path(a), Path(b)
+    for path in (path_a, path_b):
+        if not path.exists():
+            raise click.ClickException(f"Bundle file not found: {path}")
+
+    bundle_a = SubmissionBundle.load(path_a)
+    bundle_b = SubmissionBundle.load(path_b)
+
+    if lambda_penalty is not None:
+        bundle_a.lambda_penalty = lambda_penalty
+        bundle_b.lambda_penalty = lambda_penalty
+
+    ordered = sorted([(path_a, bundle_a), (path_b, bundle_b)], key=lambda p: -p[1].expected_value)
+    for rank, (path, bundle) in enumerate(ordered, start=1):
+        click.echo(
+            f"{rank}. {path.name}: expected value {bundle.expected_value:.2f} (lambda={bundle.lambda_penalty:.1f}), "
+            f"resolve rate {bundle.resolve_rate * 100:.1f}%, "
+            f"abstain rate {bundle.abstain_rate * 100:.1f}%, "
+            f"confident error rate {bundle.confident_error_rate * 100:.1f}%, "
+            f"{len(bundle.task_results)} tasks"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Standalone entry point: bernstein-bench <subcommand>
 # ---------------------------------------------------------------------------
 

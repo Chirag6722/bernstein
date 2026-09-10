@@ -54,6 +54,11 @@ class TaskResult:
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
     stored_receipt_hash: str = ""
+    # Whether the task ended with a declared abstention.
+    abstained: bool = False
+    abstention_reason: str = ""
+    # Declared confidence probability in [0.0, 1.0].
+    confidence: float = 1.0
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -71,7 +76,7 @@ class TaskResult:
         return self.stored_receipt_hash
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "task_id": self.task_id,
             "task_hash": self.task_hash,
             "receipt": self.receipt,
@@ -81,7 +86,11 @@ class TaskResult:
             "passed": self.passed,
             "score": self.score,
             "harness_output": self.harness_output,
+            "abstained": self.abstained,
+            "abstention_reason": self.abstention_reason,
+            "confidence": self.confidence,
         }
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +154,9 @@ class SubmissionBundle:
     # and a pre-#5568 bundle derives it on load instead of failing.
     harness_fingerprint: str = ""
 
+    # Penalty parameter for incorrect answers (wrong = -lambda). Defaults to 1.0.
+    lambda_penalty: float = 1.0
+
     def __post_init__(self) -> None:
         # If caller didn't supply a fingerprint, derive it now — same
         # emit-time contract as TaskResult.stored_receipt_hash.
@@ -169,6 +181,62 @@ class SubmissionBundle:
         if not self.task_results:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
+
+    @property
+    def abstained_count(self) -> int:
+        return sum(1 for r in self.task_results if r.abstained)
+
+    @property
+    def resolved_count(self) -> int:
+        return sum(1 for r in self.task_results if r.passed and not r.abstained)
+
+    @property
+    def wrong_count(self) -> int:
+        return sum(1 for r in self.task_results if not r.passed and not r.abstained)
+
+    @property
+    def attempted_count(self) -> int:
+        return len(self.task_results) - self.abstained_count
+
+    @property
+    def resolve_rate(self) -> float:
+        """Resolve rate: resolved / attempted (abstentions excluded from denominator)."""
+        if self.attempted_count <= 0:
+            return 0.0
+        return self.resolved_count / self.attempted_count
+
+    @property
+    def abstain_rate(self) -> float:
+        """Abstain rate: abstained / total."""
+        if not self.task_results:
+            return 0.0
+        return self.abstained_count / len(self.task_results)
+
+    @property
+    def confident_error_rate(self) -> float:
+        """Confident-error rate: wrong / (wrong + resolved)."""
+        denominator = self.wrong_count + self.resolved_count
+        if denominator <= 0:
+            return 0.0
+        return self.wrong_count / denominator
+
+    @property
+    def expected_value(self) -> float:
+        """Expected value under lambda penalty: (resolved * 1.0 + abstained * 0.0 + wrong * -lambda) / total."""
+        if not self.task_results:
+            return 0.0
+        total_ev = self.resolved_count * 1.0 + self.abstained_count * 0.0 + self.wrong_count * (-self.lambda_penalty)
+        return total_ev / len(self.task_results)
+
+    @property
+    def brier_score(self) -> float:
+        """Brier score over predicted confidence vs binary outcome."""
+        if not self.task_results:
+            return 0.0
+        squared_errors = [
+            (r.confidence - (1.0 if r.passed and not r.abstained else 0.0)) ** 2 for r in self.task_results
+        ]
+        return sum(squared_errors) / len(squared_errors)
 
     # ------------------------------------------------------------------
     # Content hash (covers everything *except* the signature field)
@@ -210,6 +278,12 @@ class SubmissionBundle:
             "harness_fingerprint": self.harness_fingerprint,
             "overall_score": self.overall_score,
             "pass_rate": self.pass_rate,
+            "resolve_rate": self.resolve_rate,
+            "abstain_rate": self.abstain_rate,
+            "confident_error_rate": self.confident_error_rate,
+            "lambda_penalty": self.lambda_penalty,
+            "expected_value": self.expected_value,
+            "brier_score": self.brier_score,
             "task_results": [r.to_dict() for r in self.task_results],
             "signature": self.signature,
             "signer_fingerprint": self.signer_fingerprint,
@@ -248,6 +322,9 @@ class SubmissionBundle:
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
+                abstained=r.get("abstained", False),
+                abstention_reason=r.get("abstention_reason", ""),
+                confidence=r.get("confidence", 1.0),
             )
             for r in raw["task_results"]
         ]
@@ -261,6 +338,7 @@ class SubmissionBundle:
             signer_fingerprint=raw.get("signer_fingerprint", ""),
             holdout_hash=raw.get("holdout_hash", ""),
             harness_fingerprint=raw.get("harness_fingerprint", ""),
+            lambda_penalty=raw.get("lambda_penalty", 1.0),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:
