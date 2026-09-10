@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+#: Default penalty for a wrong answer under expected-value scoring (#5567).
+#: A bundle that stores this value is hashed exactly as it was before the
+#: field existed, so published bundle hashes do not move.
+_DEFAULT_LAMBDA_PENALTY = 1.0
+
+
 @dataclass
 class TaskResult:
     """
@@ -154,8 +160,8 @@ class SubmissionBundle:
     # and a pre-#5568 bundle derives it on load instead of failing.
     harness_fingerprint: str = ""
 
-    # Penalty parameter for incorrect answers (wrong = -lambda). Defaults to 1.0.
-    lambda_penalty: float = 1.0
+    # Penalty parameter for incorrect answers (wrong = -lambda).
+    lambda_penalty: float = _DEFAULT_LAMBDA_PENALTY
 
     def __post_init__(self) -> None:
         # If caller didn't supply a fingerprint, derive it now — same
@@ -257,6 +263,13 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             payload_dict["holdout_hash"] = self.holdout_hash
+        # lambda reorders `bench compare`, so a bundle that carries a
+        # non-default one has to commit to it: two bundles with identical
+        # task results but different lambda rank differently and must not
+        # share a hash. Included only when it is not the default, so every
+        # bundle written before #5567 keeps the hash it was published with.
+        if self.lambda_penalty != _DEFAULT_LAMBDA_PENALTY:
+            payload_dict["lambda_penalty"] = self.lambda_penalty
         payload = json.dumps(
             payload_dict,
             sort_keys=True,

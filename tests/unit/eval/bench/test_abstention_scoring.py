@@ -371,3 +371,67 @@ def test_compare_ranks_by_expected_value_and_prints_resolve_rate(tmp_path: Path)
     assert "resolve rate" in output.lower()
     assert "abstain rate" in output.lower()
     assert "confident error" in output.lower()
+
+
+class TestCompareCommandKeepsBothSurfaces:
+    """`bench compare` grew a second definition and lost the first (#5567/#5568).
+
+    Both the expected-value options from #5567 and the harness-fingerprint
+    guard from #5568 register the ``compare`` subcommand. Click's
+    ``add_command`` is a dict assignment, so a second registration under the
+    same name silently replaces the first -- dropping whichever landed
+    earlier, with no error at import or at run time. These pin that one
+    command carries both surfaces.
+    """
+
+    def test_compare_is_registered_exactly_once(self) -> None:
+        from bernstein.eval.bench import bench_cli
+
+        source = Path(bench_cli.__file__).read_text(encoding="utf-8")
+        assert source.count('@bench_group.command(name="compare")') == 1
+        assert source.count("def bench_compare(") == 1
+
+    def test_compare_exposes_both_option_families(self) -> None:
+        from bernstein.eval.bench.bench_cli import bench_group
+
+        compare = bench_group.commands["compare"]
+        options = {opt for param in compare.params for opt in getattr(param, "opts", [])}
+
+        # #5568: the harness-drift guard must survive.
+        assert "--allow-harness-drift" in options
+        # #5567: the expected-value penalty must be reachable.
+        assert "--penalty" in options
+        assert "--lambda" in options
+
+
+class TestLambdaPenaltyIsCoveredByTheBundleHash:
+    """lambda reorders `bench compare`, so a bundle must commit to it (#5567)."""
+
+    @staticmethod
+    def _bundle(**over: object) -> SubmissionBundle:
+        kwargs: dict[str, object] = {
+            "suite_hash": "suite-hash",
+            "suite_version": "1.0.0",
+            "submitted_at": "2026-01-01T00:00:00Z",
+            "scheduler_config": {"parallelism": 1},
+            "task_results": [],
+        }
+        kwargs.update(over)
+        return SubmissionBundle(**kwargs)  # type: ignore[arg-type]
+
+    def test_a_non_default_lambda_changes_the_hash(self) -> None:
+        default = self._bundle()
+        penalised = self._bundle()
+        penalised.lambda_penalty = 2.0
+        penalised._bundle_hash = None
+
+        assert penalised.bundle_hash() != default.bundle_hash()
+
+    def test_the_default_lambda_leaves_published_hashes_untouched(self) -> None:
+        """A bundle written before the field existed must keep its hash."""
+        default = self._bundle()
+        explicit = self._bundle()
+        explicit.lambda_penalty = 1.0
+        explicit._bundle_hash = None
+
+        assert explicit.bundle_hash() == default.bundle_hash()
