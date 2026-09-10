@@ -1346,8 +1346,18 @@ def test_salvage_merge_records_journal_row(tmp_path: Path) -> None:
     assert row["reason"] == "dead_agent"
 
 
-def test_salvage_row_precedes_task_retried_for_same_task(tmp_path: Path) -> None:
-    """The salvage task_merged event is recorded before task_retried."""
+def test_save_partial_work_records_the_salvage_row_before_returning(tmp_path: Path) -> None:
+    """`_save_partial_work` has written the salvage `task_merged` row by the time it returns.
+
+    Deliberately NOT an ordering test against `task_retried`. That ordering is
+    decided in two places this test does not drive - `reap_dead_agents`
+    (`orchestrator.py`) and `_record_tick_events`, which emits `task_retried`
+    separately - so a test that writes `task_retried` itself would assert an
+    order it constructed, and could not fail whatever production does
+    (#5271 review, F2). What this function owns is that the row is durable
+    before it hands control back; anything the tick records afterwards
+    necessarily follows it.
+    """
     from bernstein.core.agents.agent_lifecycle import _save_partial_work
     from bernstein.core.git.git_pr import MergeResult
     from bernstein.core.replay.journal import EventJournal, load_events
@@ -1382,12 +1392,16 @@ def test_salvage_row_precedes_task_retried_for_same_task(tmp_path: Path) -> None
     # 1. Salvage merge occurs during reap
     _save_partial_work(spawner, session, recorder=journal, reason="orphan_no_signals")
 
-    # 2. Orchestrator retries task
-    journal.record("task_retried", task_id="T-99", attempt=2)
-
     events = load_events(journal.path).events
     event_types = [e.get("event") for e in events]
-    assert event_types == ["task_merged", "task_retried"]
+
+    # The salvage row is on disk at return time, and it is the only thing
+    # this call wrote - nothing else has had a chance to interleave.
+    assert event_types == ["task_merged"]
+    merged = events[0]
+    assert merged["task_id"] == "T-99"
+    assert merged["reason"] == "orphan_no_signals"
+    assert merged["salvaged_commit"]
 
 
 def test_failed_salvage_merge_records_nothing(tmp_path: Path) -> None:

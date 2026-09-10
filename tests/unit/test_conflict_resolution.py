@@ -170,12 +170,13 @@ class TestMergeWithConflictDetection:
             GitResult(0, "", ""),  # _verify_merge_staging_is_safe: nothing staged -> safe
             GitResult(1, "", "nothing to commit"),  # commit fails
             GitResult(0, "", ""),  # merge --abort (fallback)
-            GitResult(0, "0f1e2d3c4b5a\n", ""),  # rev-parse HEAD
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
         assert result.conflicting_files == []
-        assert result.merge_commit == "0f1e2d3c4b5a"
+        # No commit was produced on this path, so nothing is named. Reading
+        # HEAD here would report the pre-merge tip (#5271 review, F1).
+        assert result.merge_commit == ""
 
 
 # ------------------------------------------------------------------
