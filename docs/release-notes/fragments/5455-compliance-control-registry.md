@@ -30,4 +30,4 @@ the `BenchRunner` / `ReliabilityRunner` library API does not enforce it.
 The control table in `docs/compliance/regulator-mapped-packs.md` is pinned
 by a test to what the registry renders for every built-in suite, so it
 cannot drift from what the code declares; `bernstein compliance controls
---coverage` reads the same suite list.
+--coverage` reads the same suite list (#5455).
