@@ -8,14 +8,31 @@ mappings into standard NIST OSCAL v1.1.0 Assessment Results JSON format.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bernstein.compliance.controls import ControlRegistry
     from bernstein.eval.bench.bundle import SubmissionBundle
 
 OSCAL_VERSION: str = "1.1.0"
 _OSCAL_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+#: Namespace stamped on the ``props`` this export adds to a finding, per the
+#: OSCAL convention that non-core properties name their origin.
+BERNSTEIN_PROP_NS = "https://bernstein.dev/ns/oscal"
+
+#: ``--standard`` value -> key under ``Control.references`` that names the
+#: clause of that standard a control maps to. The standard is what the
+#: document is anchored against, so every finding carries its clause.
+_STANDARD_REFERENCE_KEY: dict[str, str] = {
+    "ai-act": "eu_ai_act",
+    "owasp-asi": "owasp_asi",
+    "owasp-skills": "owasp_skills",
+    "iso-42001": "iso_42001",
+}
 
 #: Mean task score at or above which a measured control is reported
 #: ``satisfied``. This is the export's own policy -- the bench harness has no
@@ -31,22 +48,39 @@ def _deterministic_uuid(name: str) -> str:
     return str(uuid.uuid5(_OSCAL_NAMESPACE, name))
 
 
+def _collected_at(bundle: SubmissionBundle) -> str:
+    """The bundle's own ``submitted_at`` as an OSCAL timestamp.
+
+    Deterministic for a given bundle, and true -- unlike an epoch sentinel,
+    which would say the observation was collected in 1970.
+    """
+    return datetime.fromtimestamp(float(bundle.submitted_at), tz=UTC).isoformat()
+
+
 def build_oscal_assessment_results(
     standard: str,
-    bundles: list[SubmissionBundle],
+    bundles: Sequence[SubmissionBundle],
     registry: ControlRegistry | None = None,
     *,
     satisfied_threshold: float = SATISFIED_SCORE_THRESHOLD,
 ) -> dict[str, Any]:
     """Build a deterministic NIST OSCAL Assessment Results document.
 
+    ``standard`` is one of :data:`bernstein.compliance.evidence_pack.SUPPORTED_STANDARDS`;
+    each finding carries the clause of that standard its control maps to
+    (``props`` ``clause``), or ``unmapped`` when the registry records none.
+
     Controls are mapped to bundles through the suite each bundle names, via
     the same resolver the evidence pack uses
     (:func:`bernstein.compliance.evidence_pack.resolve_suite_controls`).
-    Bundles from a suite that is not a built-in cannot be mapped from here;
-    they are named in the result's ``remarks`` rather than silently reported
-    as no coverage.
+    When several bundles measure a control the one with the latest
+    ``submitted_at`` is reported. Bundles from a suite that is not a
+    built-in cannot be mapped from here; they are named in the result's
+    ``remarks`` rather than silently reported as no coverage.
     """
+    reference_key = _STANDARD_REFERENCE_KEY.get(standard)
+    if reference_key is None:
+        raise ValueError(f"unsupported standard {standard!r}; expected one of {sorted(_STANDARD_REFERENCE_KEY)}")
     if registry is None:
         from bernstein.compliance.controls import get_default_registry
 
@@ -70,9 +104,11 @@ def build_oscal_assessment_results(
     findings: list[dict[str, Any]] = []
 
     for c in controls:
+        clause = c.references.get(reference_key, "unmapped")
+        clause_prop = {"name": "clause", "ns": BERNSTEIN_PROP_NS, "value": clause}
         matched_bundles = control_bundles.get(c.control_id, [])
         if matched_bundles:
-            b = matched_bundles[-1]
+            b = max(matched_bundles, key=lambda m: float(m.submitted_at))
             b_hash = b.bundle_hash()
             obs_uuid = _deterministic_uuid(f"observation-{c.control_id}-{b_hash}")
             finding_uuid = _deterministic_uuid(f"finding-{c.control_id}-{b_hash}")
@@ -86,11 +122,14 @@ def build_oscal_assessment_results(
                         f"(bundle {b_hash[:12]}). Score: {b.overall_score:.4f}."
                     ),
                     "methods": ["test", "examine"],
-                    "collected": "1970-01-01T00:00:00+00:00",
+                    "collected": _collected_at(b),
                     "relevant-evidence": [
                         {
                             "href": f"bench-bundles/{b_hash}.json",
-                            "description": f"Signed submission bundle for suite {b.suite_version}",
+                            "description": (
+                                f"Submission bundle for suite {b.suite_version} "
+                                "(hash-consistent; signature not verified)"
+                            ),
                         }
                     ],
                 }
@@ -105,6 +144,7 @@ def build_oscal_assessment_results(
                         f"{c.description} Verdict: mean task score {b.overall_score:.4f} "
                         f"against satisfied threshold {satisfied_threshold:.2f}."
                     ),
+                    "props": [clause_prop],
                     "target": {
                         "type": "control",
                         "target-id": c.control_id,
@@ -120,6 +160,7 @@ def build_oscal_assessment_results(
                     "uuid": finding_uuid,
                     "title": f"Assessment finding for {c.control_id}: {c.title}",
                     "description": c.description,
+                    "props": [clause_prop],
                     "target": {
                         "type": "control",
                         "target-id": c.control_id,

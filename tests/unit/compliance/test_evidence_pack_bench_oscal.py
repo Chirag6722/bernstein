@@ -263,6 +263,48 @@ class TestOSCALExport:
         finding_targets = [f["target"]["target-id"] for f in findings]
         assert "CTL-ROB-01" in finding_targets
 
+    def test_findings_carry_the_clause_of_the_requested_standard(
+        self, sample_sdd_with_bundle: tuple[Path, SubmissionBundle]
+    ) -> None:
+        from bernstein.compliance.controls import get_default_registry
+
+        _, bundle = sample_sdd_with_bundle
+        registry = get_default_registry()
+        for standard, key in (("ai-act", "eu_ai_act"), ("iso-42001", "iso_42001"), ("owasp-asi", "owasp_asi")):
+            doc = build_oscal_assessment_results(standard=standard, bundles=[bundle])
+            findings = doc["assessment-results"]["results"][0]["findings"]
+            assert len(findings) == len(registry.list_controls())
+            for f in findings:
+                control = registry.get(f["target"]["target-id"])
+                assert control is not None
+                (clause,) = [p["value"] for p in f["props"] if p["name"] == "clause"]
+                assert clause == control.references.get(key, "unmapped"), (standard, control.control_id)
+
+    def test_unsupported_standard_is_refused_not_labelled(
+        self, sample_sdd_with_bundle: tuple[Path, SubmissionBundle]
+    ) -> None:
+        _, bundle = sample_sdd_with_bundle
+        with pytest.raises(ValueError, match="unsupported standard"):
+            build_oscal_assessment_results(standard="soc2", bundles=[bundle])
+
+    def test_latest_bundle_by_submitted_at_is_reported_regardless_of_order(
+        self, sample_sdd_with_bundle: tuple[Path, SubmissionBundle]
+    ) -> None:
+        _, bundle = sample_sdd_with_bundle
+        older = SubmissionBundle(
+            suite_hash=bundle.suite_hash,
+            suite_version=bundle.suite_version,
+            task_results=bundle.task_results,
+            scheduler_config=bundle.scheduler_config,
+            submitted_at=bundle.submitted_at - 3600,
+        )
+        for order in ([older, bundle], [bundle, older]):
+            doc = build_oscal_assessment_results(standard="ai-act", bundles=order)
+            result = doc["assessment-results"]["results"][0]
+            (obs,) = [o for o in result["observations"] if "CTL-ROB-01" in o["title"]]
+            assert bundle.bundle_hash()[:12] in obs["description"]
+            assert obs["collected"].startswith("20")  # the bundle's own time, not the 1970 sentinel
+
     def test_oscal_export_is_deterministic(self, sample_sdd_with_bundle: tuple[Path, SubmissionBundle]) -> None:
         _, bundle = sample_sdd_with_bundle
         doc1 = build_oscal_assessment_results(standard="ai-act", bundles=[bundle])
