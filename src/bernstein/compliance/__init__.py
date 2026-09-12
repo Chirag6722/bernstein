@@ -34,8 +34,13 @@ from bernstein.compliance.evidence_pack import (
     EvidencePack,
     build_evidence_pack,
     get_standard_map,
+    verify_evidence_pack,
 )
 from bernstein.compliance.iso42001 import control_map as iso42001_control_map
+from bernstein.compliance.oscal import (
+    build_oscal_assessment_results,
+    validate_oscal_assessment_results,
+)
 from bernstein.compliance.owasp_asi import control_map as owasp_asi_control_map
 from bernstein.compliance.owasp_skills import control_map as owasp_skills_control_map
 
@@ -58,9 +63,12 @@ __all__ = [
     "TechDoc",
     "TechDocGenerator",
     "build_evidence_pack",
+    "build_oscal_assessment_results",
     "get_default_registry",
     "get_standard_map",
     "iso42001_control_map",
     "owasp_asi_control_map",
     "owasp_skills_control_map",
+    "validate_oscal_assessment_results",
+    "verify_evidence_pack",
 ]

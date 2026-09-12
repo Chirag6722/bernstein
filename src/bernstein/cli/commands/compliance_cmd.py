@@ -995,3 +995,57 @@ def controls_command(framework: str | None, coverage: bool, output_format: str) 
             cov_str = ", ".join(covering) if covering else "None"
             click.echo(f"  └─ Suites covering: {cov_str}")
     click.echo(f"\nTotal: {len(controls)} controls")
+
+
+# ---------------------------------------------------------------------------
+# `bernstein compliance oscal` - NIST OSCAL Assessment Results export
+# ---------------------------------------------------------------------------
+
+
+@compliance_group.command("oscal")
+@click.option(
+    "--standard",
+    default="ai-act",
+    type=click.Choice(["ai-act", "owasp-asi", "owasp-skills", "iso-42001"], case_sensitive=False),
+    show_default=True,
+    help="Regulatory standard to anchor the assessment results against.",
+)
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    type=click.Path(path_type=Path),
+    help="Project root directory (parent of .sdd/).",
+)
+@click.option(
+    "--out",
+    "output_file",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Destination file to write OSCAL assessment-results JSON (default: stdout).",
+)
+def oscal_export_cmd(standard: str, workdir: Path, output_file: Path | None) -> None:
+    """Export benchmark assessment results in NIST OSCAL v1.1.0 format."""
+    from bernstein.compliance.evidence_pack import _read_bench_bundles
+    from bernstein.compliance.oscal import build_oscal_assessment_results
+
+    sdd_dir = workdir / ".sdd"
+    loaded, unreadable = _read_bench_bundles(sdd_dir)
+    if unreadable:
+        # An assessment-results document that quietly omitted a bundle it
+        # could not read would assert a coverage it did not check.
+        for entry in unreadable:
+            click.echo(f"unreadable bundle: {entry['path']}: {entry['reason']}", err=True)
+        raise click.ClickException(
+            f"{len(unreadable)} bundle(s) under {sdd_dir} could not be read; "
+            "refusing to export an assessment over them."
+        )
+    oscal_doc = build_oscal_assessment_results(standard=standard.lower(), bundles=[lb.bundle for lb in loaded])
+    doc_json = json.dumps(oscal_doc, indent=2, sort_keys=True)
+
+    if output_file is not None:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text(doc_json + "\n", encoding="utf-8")
+        click.echo(f"OSCAL assessment results written to: {output_file}")
+    else:
+        click.echo(doc_json)

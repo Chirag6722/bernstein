@@ -174,3 +174,32 @@ bernstein compliance controls --format markdown
 | CTL-DEP-01 | Air-Gapped & Offline Verification Support | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | verifier_receipt | *(uncovered)* |
 <!-- controls-table:end -->
 
+## NIST OSCAL Assessment-Results Export
+
+Bernstein supports automated export of evaluation benchmark assessment results in NIST OSCAL v1.1.0 format.
+
+```bash
+# Export OSCAL assessment-results to stdout
+bernstein compliance oscal --standard ai-act
+
+# Export OSCAL assessment-results to a JSON file
+bernstein compliance oscal --standard ai-act --out oscal-assessment-results.json
+```
+
+The exported document models findings, benchmark observations, and control satisfaction state (`satisfied` vs `not-satisfied`) mapped to the central control registry and standard clauses.
+
+`bernstein-bench run` writes its bundle wherever `--out` points (default `bundle.json` in the working directory); place the bundles a pack should carry under `.sdd/bench/bundles/` -- the file name is free, the pack keys them by bundle hash:
+
+```bash
+bernstein-bench run golden-v1 --out .sdd/bench/bundles/golden-v1.json
+bernstein-bench run tool-surface-v1 --out .sdd/bench/bundles/tool-surface-v1.json
+```
+
+How bundles reach the pack and the OSCAL document, and what each does and does not assert:
+
+- **Source.** Every `*.json` under `.sdd/bench/bundles/` is loaded through `SubmissionBundle.from_dict`, which recomputes every task's receipt hash and the bundle hash and raises on mismatch. The pack embeds each bundle that loads **byte-for-byte** under `bench-bundles/<bundle-hash>.json`; it is not re-serialised, so the embedded copy still passes `bernstein-bench verify`.
+- **Unreadable bundles are recorded, not dropped.** `controls.json` lists them under `bench_bundles_unreadable` as `{"path", "reason"}`. `bernstein compliance oscal` goes further and refuses to export at all while any bundle under the directory does not load, because an assessment-results document that quietly omitted one would assert a coverage it did not check.
+- **Control mapping goes through the suite.** A bundle names its suite (`suite_version`); the suite declares its controls (see the table above). A control is `measured` when a bundle from a suite declaring it is present, using the most recently listed such bundle. Bundles from a suite that is not built in cannot be mapped from here: the pack lists them in `bench_assessment._unresolvable_suites` and the OSCAL document names them in the result's `remarks`.
+- **`satisfied` threshold.** An OSCAL finding is `satisfied` when the bundle's mean task score is at or above `SATISFIED_SCORE_THRESHOLD` (0.99). This is the export's own policy -- the bench harness has no pass threshold -- and every finding's description records the score and the threshold it was judged against.
+- **What is not verified.** Neither the pack verifier nor `bernstein-bench verify` checks a bundle's `signature`; only reliability receipts carry a trusted-key check today. Treat an embedded bundle as hash-consistent evidence of what was run, not as attested by a known key.
+
