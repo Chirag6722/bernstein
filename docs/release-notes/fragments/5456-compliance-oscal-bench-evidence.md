@@ -4,4 +4,4 @@ Compliance evidence packs (`bernstein compliance pack`) now embed the signed ben
 
 `verify_evidence_pack` checks the manifest's artefact hashes and re-runs every embedded bundle through `SubmissionBundle.from_dict`, the same hash check `bernstein-bench verify` starts with. It does **not** verify bundle signatures; nothing in the bench tooling does today, and the pack does not claim otherwise.
 
-Operators can also export assessment results in NIST OSCAL v1.1.0 JSON via `bernstein compliance oscal [--standard <id>] [--out <file>]`. The command refuses to export over a bundle it could not read.
+Operators can also export assessment results in NIST OSCAL v1.1.0 JSON via `bernstein compliance oscal [--standard <id>] [--out <file>]`. The command refuses to export over a bundle it could not read (#5456).
