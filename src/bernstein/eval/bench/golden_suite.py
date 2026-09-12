@@ -22,9 +22,9 @@ def build_golden_suite_v1() -> BenchSuite:
             id="file_io_read_write",
             description=("Create a file, write deterministic content to it, read it back, and assert byte-equality."),
             steps=(
-                "write 'hello bernstein\n' to /tmp/bench_test.txt",
+                "write 'hello bernstein\\n' to /tmp/bench_test.txt",
                 "read /tmp/bench_test.txt",
-                "assert content == 'hello bernstein\n'",
+                "assert content == 'hello bernstein\\n'",
             ),
             assertions=(
                 {"kind": "file_exists", "path": "/tmp/bench_test.txt"},

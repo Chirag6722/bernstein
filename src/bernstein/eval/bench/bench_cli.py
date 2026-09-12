@@ -44,12 +44,24 @@ def _get_suite(name: str):
         "tool-surface-v1": build_tool_surface_suite,
     }
 
+    suite: BenchSuite | None = None
     if name in _BUILTIN:
-        return _BUILTIN[name]()
+        suite = _BUILTIN[name]()
+    else:
+        path = Path(name)
+        if path.suffix == ".json" and path.exists():
+            suite = BenchSuite.load(path)
 
-    path = Path(name)
-    if path.suffix == ".json" and path.exists():
-        return BenchSuite.load(path)
+    if suite is not None:
+        # #5455: a suite that maps to no compliance control is refused here,
+        # at the one point every ``bench`` subcommand resolves its suite
+        # through, so an unmapped suite cannot run, score, or publish a
+        # bundle. Built-in and ``.json`` suites are held to the same rule.
+        try:
+            suite.validate_controls()
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="suite") from exc
+        return suite
 
     raise click.BadParameter(
         f"Unknown suite {name!r}. Built-in suites: {', '.join(_BUILTIN)}. Or pass a path to a .json suite file.",

@@ -136,6 +136,8 @@ bernstein compliance controls --format markdown
 
 ### Registered Standard Controls & Benchmark Coverage
 
+<!-- controls-table:start -- generated from ControlRegistry.to_markdown_table(); do not edit by hand,
+     tests/unit/compliance/test_controls_registry.py fails when this drifts from the registry -->
 | Control ID | Title | Frameworks | Evidence Kinds | Suites Covering |
 | --- | --- | --- | --- | --- |
 | CTL-GOV-01 | Policy as Code & Governance Boundary | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, policy, lineage_log | *(uncovered)* |
@@ -146,10 +148,10 @@ bernstein compliance controls --format markdown
 | CTL-OVS-01 | Human Oversight & Approval Gating | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | approval_receipt, audit_chain | *(uncovered)* |
 | CTL-OVS-02 | Displayed vs Executed Action Equivalence | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | approval_receipt, oversight_evidence | *(uncovered)* |
 | CTL-SEC-01 | Prompt Injection & Goal Hijack Defense | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain | *(uncovered)* |
-| CTL-SEC-02 | Tool Execution Sandboxing & Authorization | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, bench_bundle | *(uncovered)* |
+| CTL-SEC-02 | Tool Execution Sandboxing & Authorization | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, bench_bundle | tool-surface-v1 |
 | CTL-SEC-03 | Canary Token & Secret Leakage Prevention | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle, audit_chain | *(uncovered)* |
 | CTL-SEC-04 | Gate Evasion & Adversarial Bypass Resistance | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | bench_bundle | *(uncovered)* |
-| CTL-SEC-05 | Outbound Model Egress & Policy Boundary Checks | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, check_record | *(uncovered)* |
+| CTL-SEC-05 | Outbound Model Egress & Policy Boundary Checks | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, check_record | tool-surface-v1 |
 | CTL-ROB-01 | Deterministic Execution & Offline Replay Verification | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, verifier_receipt | golden-v1 |
 | CTL-ROB-02 | Model Drift & Degradation Detection | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, drift_report | *(uncovered)* |
 | CTL-ROB-03 | Error Handling & Graceful Degradation | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, bench_bundle | *(uncovered)* |
@@ -157,7 +159,7 @@ bernstein compliance controls --format markdown
 | CTL-DATA-02 | Confidential Information & PII Redaction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF, OWASP_ASI | audit_chain, redaction_log | *(uncovered)* |
 | CTL-INC-01 | Serious Incident Recording & Timeline Reconstruction | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | incident_pack, audit_chain | *(uncovered)* |
 | CTL-COST-01 | Token Budget & Cost Allocation Controls | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, cost_ledger | *(uncovered)* |
-| CTL-EVAL-01 | Content-Addressed Benchmark Reproducibility | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, suite_hash | golden-v1 |
+| CTL-EVAL-01 | Content-Addressed Benchmark Reproducibility | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, suite_hash | golden-v1, tool-surface-v1 |
 | CTL-EVAL-02 | Multi-Run Empirical Determinism Scoring | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | bench_bundle, reliability_report | golden-v1 |
 | CTL-EVAL-03 | Quality Gate & Verification Adjudication | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, bench_bundle | *(uncovered)* |
 | CTL-QUAL-01 | Producing Identity & Independence Class Tracking | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | adjudication_record, audit_chain | *(uncovered)* |
@@ -170,4 +172,5 @@ bernstein compliance controls --format markdown
 | CTL-DOC-01 | Technical Documentation & Compliance Evidence Packs | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | evidence_pack, tech_doc | *(uncovered)* |
 | CTL-DOC-02 | Agent Capability & Limitation Declaration | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | agent_card, system_descriptor | *(uncovered)* |
 | CTL-DEP-01 | Air-Gapped & Offline Verification Support | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | verifier_receipt | *(uncovered)* |
+<!-- controls-table:end -->
 

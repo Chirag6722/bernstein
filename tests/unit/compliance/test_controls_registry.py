@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.compliance_cmd import compliance_group
 from bernstein.compliance.controls import (
+    Control,
     get_default_registry,
 )
 from bernstein.eval.bench.golden_suite import build_golden_suite_v1
@@ -121,8 +122,12 @@ class TestBenchSuiteControlEnforcement:
 
 class TestComplianceControlsCLI:
     def test_compliance_controls_text(self) -> None:
+        """Through the real root ``cli``, not the group object, so a break in
+        ``cli.add_command(compliance_group, "compliance")`` is caught here."""
+        from bernstein.cli.main import cli
+
         runner = CliRunner()
-        result = runner.invoke(compliance_group, ["controls"])
+        result = runner.invoke(cli, ["compliance", "controls"])
         assert result.exit_code == 0
         assert "CTL-GOV-01" in result.output
         assert "Control ID" in result.output or "Title" in result.output
@@ -150,3 +155,71 @@ class TestComplianceControlsCLI:
         result = runner.invoke(compliance_group, ["controls", "--coverage"])
         assert result.exit_code == 0
         assert "golden-v1" in result.output or "Coverage" in result.output
+
+
+class TestControlsAreEnforcedAndDocumented:
+    """The four things #5455's acceptance criteria require that the first cut did not deliver."""
+
+    def test_every_builtin_suite_declares_a_registered_control(self) -> None:
+        """Every suite ``bench`` can resolve by name passes ``validate_controls``.
+
+        Goes through ``_get_suite`` so a built-in added later without a
+        declaration is caught here rather than at the first ``bench run``.
+        """
+        from bernstein.eval.bench.bench_cli import _get_suite
+
+        for name in ("golden-v1", "tool-surface-v1"):
+            suite = _get_suite(name)
+            assert suite.controls, f"{name} declares no controls"
+            assert get_default_registry().validate_control_ids(suite.controls) == []
+
+    def test_the_cli_refuses_a_suite_that_maps_to_no_control(self, tmp_path: Path) -> None:
+        """``validate_controls`` is wired into the one place every subcommand resolves its suite (#5455).
+
+        A ``.json`` suite with no ``controls`` is refused by the real CLI, not
+        just by calling the method directly.
+        """
+        from bernstein.cli.main import cli
+
+        bare = BenchSuite(version="bare-v1", tasks=[BenchTask(id="t", description="d", steps=("s",), assertions=())])
+        path = tmp_path / "bare.json"
+        bare.save(path)
+
+        result = CliRunner().invoke(cli, ["bench", "run", str(path), "--out", str(tmp_path / "out.json")])
+
+        assert result.exit_code != 0
+        assert "must declare at least one control" in result.output
+
+    def test_registry_extensions_do_not_leak_between_callers(self) -> None:
+        """``get_default_registry`` hands out a fresh registry, so ``register`` is local to the caller."""
+        first = get_default_registry()
+        first.register(Control(control_id="CTL-TEST-99", title="t", description="d"))
+
+        second = get_default_registry()
+
+        assert second.get("CTL-TEST-99") is None
+        assert len(second.list_controls()) == 32
+
+    def test_the_docs_table_is_generated_from_the_registry(self) -> None:
+        """``docs/compliance/regulator-mapped-packs.md`` carries the registry table verbatim.
+
+        The block between the ``controls-table`` markers must equal what
+        ``to_markdown_table`` renders for the built-in suites today. Adding,
+        renaming, or covering a control without regenerating the doc fails
+        here instead of leaving a stale assurance in the operator's hands.
+        """
+        from bernstein.eval.bench.tool_surface_suite import build_tool_surface_suite
+
+        doc = (Path(__file__).resolve().parents[3] / "docs" / "compliance" / "regulator-mapped-packs.md").read_text(
+            encoding="utf-8"
+        )
+        start = doc.index("<!-- controls-table:start")
+        start = doc.index("-->", start) + len("-->")
+        end = doc.index("<!-- controls-table:end -->")
+        in_doc = doc[start:end].strip()
+
+        expected = get_default_registry().to_markdown_table(
+            suites=[build_golden_suite_v1(), build_tool_surface_suite()]
+        ).strip()
+
+        assert in_doc == expected, "regulator-mapped-packs.md controls table has drifted from ControlRegistry"

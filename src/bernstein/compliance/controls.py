@@ -621,10 +621,19 @@ class ControlRegistry:
         return "\n".join(lines)
 
 
-# Singleton default registry populated with standard controls
+# Module-level registry populated with the standard controls. Kept for callers
+# that import it directly; new code should call ``get_default_registry()``.
 DEFAULT_REGISTRY = ControlRegistry()
 
 
 def get_default_registry() -> ControlRegistry:
-    """Return the singleton default control registry."""
-    return DEFAULT_REGISTRY
+    """Return a registry populated with the standard controls.
+
+    A fresh instance per call, not the module-level object: ``register()``
+    mutates the registry it is called on, so handing out one shared instance
+    meant a control registered by one caller -- a test, a plugin -- leaked
+    into every later caller in the process. Building from
+    ``STANDARD_CONTROLS`` is cheap (32 entries) and gives each caller a
+    registry it may extend without affecting anyone else.
+    """
+    return ControlRegistry()
