@@ -13,12 +13,21 @@ controls: `golden-v1` (`CTL-ROB-01`, `CTL-EVAL-01`, `CTL-EVAL-02`,
 `CTL-QUAL-02`) and `tool-surface-v1` (`CTL-SEC-02`, `CTL-SEC-05`,
 `CTL-EVAL-01`).
 
-A declared control set is part of suite identity, so **`golden-v1`'s
-`suite_hash` changes** in this release. A bundle produced against the
-previous `golden-v1` will report a suite-hash mismatch under `bench verify`
-and needs re-running. A suite that declares no controls hashes exactly as
-before, so nothing else published moves.
+A declared control set is part of suite identity — canonicalised, so order
+and repeats do not matter — and both built-in suites now declare one, so
+**both `golden-v1` and `tool-surface-v1` change `suite_hash`** in this
+release. A bundle or reliability receipt produced against either on a
+previous release will report a suite-hash mismatch under `bench verify` /
+`bench reliability-verify` and needs re-running. A suite that declares no
+controls hashes exactly as before.
 
-The control table in `docs/compliance/regulator-mapped-packs.md` is now
-generated from the registry and pinned by a test, so it cannot drift from
-what the code declares.
+Because a declaration is now required, a `.json` suite written by a previous
+release is refused by every `bench` subcommand until a `controls` list is
+added to the file; adding it changes that suite's hash, so bundles produced
+against the old file need re-running too. The gate is applied at the CLI;
+the `BenchRunner` / `ReliabilityRunner` library API does not enforce it.
+
+The control table in `docs/compliance/regulator-mapped-packs.md` is pinned
+by a test to what the registry renders for every built-in suite, so it
+cannot drift from what the code declares; `bernstein compliance controls
+--coverage` reads the same suite list.

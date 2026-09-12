@@ -116,7 +116,9 @@ class BenchSuite:
         # every receipt, bundle and leaderboard row that names its hash --
         # stays valid. A suite that does declare controls commits to them.
         if self.controls:
-            payload_dict["controls"] = list(self.controls)
+            # Canonical: the same declaration in any order, with any
+            # repeats, is one identity -- as holdout_hash is one digest.
+            payload_dict["controls"] = sorted(set(self.controls))
         payload = json.dumps(
             payload_dict,
             sort_keys=True,
@@ -190,6 +192,13 @@ class BenchSuite:
         ]
         holdout_hash = raw.get("holdout_hash", "")
         controls = raw.get("controls", [])
+        # The field is bound into suite identity, so its shape is checked here
+        # rather than surfacing later as a per-character "unregistered id"
+        # error (a string) or a silently accepted mapping (a dict).
+        if not isinstance(controls, list) or not all(isinstance(c, str) and c for c in controls):
+            raise ValueError(
+                f"Suite {raw.get('version')!r}: 'controls' must be a list of non-empty strings, got {controls!r}"
+            )
         suite = cls(version=raw["version"], tasks=tasks, holdout_hash=holdout_hash, controls=controls)
         # Integrity check: stored hash must match recomputed hash.
         if suite.suite_hash != raw["suite_hash"]:

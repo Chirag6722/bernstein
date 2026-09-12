@@ -958,12 +958,15 @@ def pack_incident(
 def controls_command(framework: str | None, coverage: bool, output_format: str) -> None:
     """List compliance controls and their mapped benchmark suites."""
     from bernstein.compliance.controls import get_default_registry
-    from bernstein.eval.bench.golden_suite import build_golden_suite_v1
+    from bernstein.eval.bench.bench_cli import builtin_suite_builders
 
     registry = get_default_registry()
     controls = registry.list_controls(framework=framework)
 
-    suites = [build_golden_suite_v1()] if coverage else []
+    # Every built-in suite, from the one list `bench` itself resolves, so
+    # this view cannot disagree with what the CLI enforces or the docs table
+    # pins (#5455).
+    suites = [build() for build in builtin_suite_builders().values()] if coverage else []
     cov_map = registry.coverage(suites) if coverage else {}
 
     if output_format == "json":
