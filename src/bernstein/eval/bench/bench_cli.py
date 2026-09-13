@@ -80,7 +80,15 @@ def _suite_source_uri(name: str) -> str | None:
     source = inspect.getsourcefile(module)
     if source is None:
         return None
-    parts = Path(source).resolve().parts
+    source_path = Path(source).resolve()
+    # Name the file relative to the checkout this package lives in
+    # (.../<root>/src/bernstein/eval/bench/bench_cli.py -> <root>), so a
+    # `bernstein` directory elsewhere in the path cannot mislead the slice.
+    try:
+        return source_path.relative_to(Path(__file__).resolve().parents[4]).as_posix()
+    except (ValueError, IndexError):
+        pass
+    parts = source_path.parts
     # .../src/bernstein/eval/bench/<module>.py -> src/bernstein/eval/bench/<module>.py
     try:
         return Path(*parts[parts.index("bernstein") - 1 :]).as_posix()
@@ -147,7 +155,8 @@ def bench_group() -> None:
 )
 @click.option(
     "--regression-threshold",
-    type=float,
+    # A negative tolerance would invert the gate: a perfect run "regresses".
+    type=click.FloatRange(min=0.0),
     default=0.0,
     show_default=True,
     help="Allowed pass rate drop before CI fails (e.g. 0.05 for 5% tolerance).",
@@ -269,9 +278,23 @@ def bench_run(
             scorecard.summary = baseline_problem
         click.echo("\n" + scorecard.to_markdown())
 
+        # A check run that was asked for and did not get posted must be
+        # announced, not logged at debug: the operator passed --repo and
+        # --head-sha to get one, and silence here reads as success.
         if repo and head_sha:
             client = CheckRunClient(repo=repo)
-            post_bench_check_run(scorecard=scorecard, client=client, head_sha=head_sha)
+            posted = post_bench_check_run(scorecard=scorecard, client=client, head_sha=head_sha)
+            if posted is None:
+                click.echo(
+                    "Warning: the bench scorecard check run was not posted (GitHub client not "
+                    "configured, or the API call failed); the conclusion above reached no check run.",
+                    err=True,
+                )
+        elif repo or head_sha:
+            click.echo(
+                "Warning: --repo and --head-sha are both needed to post the check run; nothing was posted.",
+                err=True,
+            )
 
         if ci and scorecard.conclusion == "failure":
             sys.exit(1)

@@ -372,16 +372,63 @@ class TestCLI_CI_Integration:
         assert second.exit_code == 0, second.output
         assert "PASS" in second.output
 
-    def test_cli_sarif_names_the_suite_source(self, tmp_path: Path) -> None:
-        sarif_out = tmp_path / "r.sarif"
+    def test_the_sarif_location_is_derived_from_the_suite_name(self, tmp_path: Path) -> None:
+        """Direct, because golden-v1 under the mock adapter fails no task and a
+        loop over zero results would assert nothing."""
+        from bernstein.eval.bench.bench_cli import _suite_source_uri
+
+        assert _suite_source_uri("golden-v1") == "src/bernstein/eval/bench/golden_suite.py"
+        assert _suite_source_uri("tool-surface-v1") == "src/bernstein/eval/bench/tool_surface_suite.py"
+        suite_path = tmp_path / "custom.json"
+        build_golden_suite_v1().save(suite_path)
+        assert _suite_source_uri(str(suite_path)) == suite_path.as_posix()
+        assert _suite_source_uri("no-such-suite") is None
+
+    def test_a_negative_regression_threshold_is_refused(self, tmp_path: Path) -> None:
+        """A negative tolerance would make a perfect run conclude failure."""
         result = CliRunner().invoke(
             bench_group,
-            ["run", "golden-v1", "--out", str(tmp_path / "b.json"), "--stub-signer", "--sarif-out", str(sarif_out)],
+            [
+                "run",
+                "golden-v1",
+                "--out",
+                str(tmp_path / "b.json"),
+                "--stub-signer",
+                "--ci",
+                "--regression-threshold",
+                "-0.05",
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert "--regression-threshold" in result.output and "not in the range" in result.output
+        assert not (tmp_path / "b.json").exists()
+
+    def test_a_check_run_that_was_not_posted_is_announced(self, tmp_path: Path) -> None:
+        """--repo and --head-sha asked for a check run; a None from the client is not silence."""
+        with patch.object(CheckRunClient, "create_bench_check_run", return_value=None) as create:
+            result = CliRunner().invoke(
+                bench_group,
+                [
+                    "run",
+                    "golden-v1",
+                    "--out",
+                    str(tmp_path / "b.json"),
+                    "--stub-signer",
+                    "--ci",
+                    "--repo",
+                    "owner/repo",
+                    "--head-sha",
+                    "abc123",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        assert create.called
+        assert "Warning: the bench scorecard check run was not posted" in result.stderr
+
+    def test_half_configured_check_run_flags_are_announced(self, tmp_path: Path) -> None:
+        result = CliRunner().invoke(
+            bench_group,
+            ["run", "golden-v1", "--out", str(tmp_path / "b.json"), "--stub-signer", "--ci", "--repo", "owner/repo"],
         )
         assert result.exit_code == 0, result.output
-        run = json.loads(sarif_out.read_text(encoding="utf-8"))["runs"][0]
-        assert run["tool"]["driver"]["properties"]["suiteVersion"] == "golden-v1"
-        for res in run["results"]:
-            assert res["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
-                "src/bernstein/eval/bench/golden_suite.py"
-            )
+        assert "--repo and --head-sha are both needed" in result.stderr
