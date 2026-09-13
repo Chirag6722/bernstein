@@ -27,6 +27,7 @@ from bernstein.eval.bench.gate_evasion_suite import (
     GateEvasionResult,
     build_gate_evasion_suite_v1,
     load_evasion_corpus,
+    materialise_case,
     run_gate_evasion_suite,
     score_gate_evasion,
 )
@@ -275,6 +276,27 @@ class TestRealGateEvaluation:
         score, _ = run_gate_evasion_suite(corpus_dir=tmp_path)
         (res,) = score.results
         assert (res.caught, res.actual_verdict) == (False, "no_gate")
+
+    def test_a_fixture_kept_out_of_the_shipped_tree_is_laid_out_as_python(self, tmp_path: Path) -> None:
+        """``*.py.txt`` in the corpus becomes ``*.py`` in the scratch tree, and is what the gate sees."""
+        case_dir = tmp_path / "corpus" / "broken"
+        case_dir.mkdir(parents=True)
+        (case_dir / "manifest.json").write_text(
+            json.dumps({"class": "broken", "gate_that_must_flag": "lint"}), encoding="utf-8"
+        )
+        (case_dir / "target.py.txt").write_text("def f(:\n", encoding="utf-8")
+        (case,) = load_evasion_corpus(tmp_path / "corpus")
+        changed = materialise_case(case, tmp_path / "tree")
+        assert changed == ["target.py"]
+        assert (tmp_path / "tree" / "target.py").read_text(encoding="utf-8") == "def f(:\n"
+        assert not (tmp_path / "tree" / "target.py.txt").exists()
+
+    def test_every_python_file_shipped_in_the_corpus_parses(self) -> None:
+        """The repository's own scanners walk ``src/``; a fixture that must not parse is stored as ``.py.txt``."""
+        import ast
+
+        for path in sorted(DEFAULT_EVASION_CORPUS_DIR.rglob("*.py")):
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
     def test_custom_evaluator_is_for_scorer_tests_only(self) -> None:
         def evaluator(case: GateEvasionCase) -> GateEvasionResult:

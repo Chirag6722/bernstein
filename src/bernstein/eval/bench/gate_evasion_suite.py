@@ -227,10 +227,14 @@ def materialise_case(case: GateEvasionCase, into: Path) -> list[str]:
     """Lay the fixture out as a working tree and return its changed files.
 
     Every file in the fixture directory except ``manifest.json`` is copied
-    as-is. A ``diff.patch`` is not applied -- the fixture directory *is* the
-    post-change state -- but the paths it names are the change set, which
-    is how a deletion reaches a gate: the file is absent from the tree and
-    present in ``changed_files``.
+    as-is, with one rule: a fixture named ``*.py.txt`` is laid out as
+    ``*.py``. The corpus lives under the shipped package, and a source file
+    that exists to not parse must not be parsed by the repository's own
+    scanners on the way in -- it becomes Python only inside the scratch
+    tree the gate runs on. A ``diff.patch`` is not applied -- the fixture
+    directory *is* the post-change state -- but the paths it names are the
+    change set, which is how a deletion reaches a gate: the file is absent
+    from the tree and present in ``changed_files``.
     """
     changed: list[str] = []
     for name in case.sample_files:
@@ -238,10 +242,11 @@ def materialise_case(case: GateEvasionCase, into: Path) -> list[str]:
         if name == "diff.patch":
             changed.extend(dict.fromkeys(_PATCH_PATH_RE.findall(src.read_text(encoding="utf-8"))))
             continue
-        dst = into / name
+        laid_out = name.removesuffix(".txt") if name.endswith(".py.txt") else name
+        dst = into / laid_out
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
-        changed.append(name)
+        changed.append(laid_out)
     return list(dict.fromkeys(changed))
 
 
