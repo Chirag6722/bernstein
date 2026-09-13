@@ -144,8 +144,10 @@ bernstein compliance controls --format markdown
 
 ### Registered Standard Controls & Benchmark Coverage
 
-<!-- controls-table:start -- generated from ControlRegistry.to_markdown_table(); do not edit by hand,
-     tests/unit/compliance/test_controls_registry.py fails when this drifts from the registry -->
+<!-- controls-table:start -- generated from
+     get_default_registry().to_markdown_table(suites=[b() for b in builtin_suite_builders().values()]);
+     do not edit by hand, tests/unit/compliance/test_controls_registry.py fails when this drifts from
+     the registry or the built-in suites' control coverage -->
 | Control ID | Title | Frameworks | Evidence Kinds | Suites Covering |
 | --- | --- | --- | --- | --- |
 | CTL-GOV-01 | Policy as Code & Governance Boundary | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | audit_chain, policy, lineage_log | *(uncovered)* |

@@ -238,7 +238,7 @@ class TestControlsAreEnforcedAndDocumented:
             )
             suite.validate_controls()  # admitted because the gate reads the same registry
         finally:
-            registry._controls.pop("CTL-ORG-TEST", None)
+            registry.unregister("CTL-ORG-TEST")
 
     def test_a_suite_declaring_no_controls_keeps_the_hash_main_published(self) -> None:
         """The compatibility guarantee, pinned to the value ``main`` computes today.
