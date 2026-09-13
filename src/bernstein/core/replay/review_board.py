@@ -476,8 +476,10 @@ def record_task_merged(
             when this row records a recovery merge rather than a verified
             one. Same omit-when-absent rule as ``merge_commit``.
         reason: Why the merge happened when it was not a verified
-            completion -- ``'orphan_no_signals'``, ``'dead_agent'``,
-            ``'shutdown'``. Same omit-when-absent rule.
+            completion -- ``'dead_agent'``, ``'orphan_no_signals'``,
+            ``'completed'`` (leftovers salvaged after a completion marker),
+            or the idle reason that recycled the agent (``'heartbeat_60s'``,
+            ``'role_drained_rebalance'``, ...). Same omit-when-absent rule.
     """
     if recorder is None:
         return
