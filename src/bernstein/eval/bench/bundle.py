@@ -200,7 +200,13 @@ class SubmissionBundle:
         return sum(r.duration_seconds for r in self.task_results)
 
     # ------------------------------------------------------------------
-    # Content hash (covers everything *except* the signature field)
+    # Content hash. Covers the suite identity, the submission time, the
+    # scheduler config, every task record (resource metrics included, when
+    # set) and holdout_hash when set. It deliberately leaves out the
+    # signature and signer_fingerprint, and every field that is recomputed
+    # from the task records on read -- overall_score, pass_rate, the three
+    # total_* sums, harness_fingerprint -- so a writer that did not emit
+    # those keys and one that does hash a bundle identically.
     # ------------------------------------------------------------------
 
     def bundle_hash(self) -> str:

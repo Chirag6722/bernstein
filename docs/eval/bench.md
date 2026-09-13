@@ -88,7 +88,12 @@ task gets a **refusal receipt** (`status: "refused"`, `refusal_reason:
 says which tasks did not run and why. The command then prints
 `Budget exceeded: limit $…, spent $…; K/N tasks refused …` and **exits 2**,
 because a run the budget cut short is not a completed run and a CI log
-reader must not mistake its score for one.
+reader must not mistake its score for one. The check runs *before* each
+task, so the first task always runs and the task that crosses the limit
+completes: spend can overshoot by at most one task's cost, which cannot be
+known before that task runs. `--budget` does not combine with
+`--reliability` — the reliability runner enforces no budget, and the
+command refuses the pair rather than run K attempts uncapped.
 
 Two runs of the same suite on the same inputs produce **byte-identical
 per-task receipts** — this is the empirical determinism property.
@@ -173,6 +178,13 @@ Cost     : $0.0500 -> $0.0300 (-0.0200, -40.0%)
 Tokens   : 100 -> 80 (-20)
 Duration : 1.00s -> 0.80s (-0.20s)
 ```
+
+The percentage is `n/a` when A cost nothing — a $0 to $0.05 jump is not a
+0.0% change. When either bundle carries budget refusals a further line,
+`Refused  : 0 -> 2 tasks never ran (budget)`, follows, and the markdown and
+JSON reports carry `refused_a` / `refused_b`: a budget-cut run is cheaper
+than a complete one only because tasks never ran, and the report says so
+rather than letting a truncation read as a saving.
 
 `--format markdown` renders the full report — summary table plus a
 per-task breakdown — and `--format json` emits it as a document (the
@@ -269,8 +281,10 @@ Two runners on the same `suite_hash` provably ran the same task set.
 }
 ```
 
-`tokens`, `cost_usd` and `duration_seconds` are what the adapter reported
-for the task (`0` when it reported nothing). They are bound into
+`tokens` and `cost_usd` are what the adapter reported for the task (`0`
+when it reported nothing); `duration_seconds` is the adapter's figure, or
+the runner's own wall-clock measurement of the task when the adapter
+reported none. They are bound into
 `bundle_hash` through the task record, so a bundle cannot be re-labelled
 cheaper after signing — but they are written only when at least one of
 them is set, so a bundle emitted before the fields existed carries none,

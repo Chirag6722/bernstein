@@ -46,7 +46,9 @@ class CompareResult:
     cost_a_usd: float
     cost_b_usd: float
     cost_delta_usd: float
-    cost_delta_percent: float
+    # None when bundle A cost nothing: a $0 -> $0.05 jump has no percentage,
+    # and printing 0.0% for it would read as "no change".
+    cost_delta_percent: float | None
     tokens_a: int
     tokens_b: int
     tokens_delta: int
@@ -54,9 +56,18 @@ class CompareResult:
     duration_b_seconds: float
     duration_delta_seconds: float
     task_comparisons: list[TaskComparison] = field(default_factory=list)
+    # Tasks a budget refused (#5464). A budget-cut run reads as cheaper than a
+    # complete one; these say how many tasks never ran, so a truncation is
+    # not read as a saving.
+    refused_a: int = 0
+    refused_b: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def cost_delta_percent_text(self) -> str:
+        """``+12.5%``, or ``n/a`` when there was no cost to take a percentage of."""
+        return "n/a" if self.cost_delta_percent is None else f"{self.cost_delta_percent:+.1f}%"
 
     def to_markdown(self) -> str:
         """Format comparison as a Markdown summary table."""
@@ -77,15 +88,19 @@ class CompareResult:
             (f"| **Score** | {self.score_a * 100:.1f}% | {self.score_b * 100:.1f}% | {self.score_delta * 100:+.1f}% |"),
             (
                 f"| **Cost (USD)** | ${self.cost_a_usd:.4f} | ${self.cost_b_usd:.4f} | "
-                f"${self.cost_delta_usd:+.4f} ({self.cost_delta_percent:+.1f}%) |"
+                f"${self.cost_delta_usd:+.4f} ({self.cost_delta_percent_text()}) |"
             ),
             f"| **Tokens** | {self.tokens_a:,} | {self.tokens_b:,} | {self.tokens_delta:+,} |",
             (
                 f"| **Duration** | {self.duration_a_seconds:.2f}s | "
                 f"{self.duration_b_seconds:.2f}s | {self.duration_delta_seconds:+.2f}s |"
             ),
-            "",
         ]
+        if self.refused_a or self.refused_b:
+            lines.append(
+                f"| **Refused (budget)** | {self.refused_a} | {self.refused_b} | {self.refused_b - self.refused_a:+d} |"
+            )
+        lines.append("")
 
         if self.task_comparisons:
             lines.extend(
@@ -121,7 +136,7 @@ def compare_bundles(bundle_a: SubmissionBundle, bundle_b: SubmissionBundle) -> C
     cost_a = bundle_a.total_cost_usd
     cost_b = bundle_b.total_cost_usd
     cost_delta = cost_b - cost_a
-    cost_delta_pct = ((cost_b - cost_a) / cost_a * 100.0) if cost_a > 0 else 0.0
+    cost_delta_pct = ((cost_b - cost_a) / cost_a * 100.0) if cost_a > 0 else None
 
     tokens_a = bundle_a.total_tokens
     tokens_b = bundle_b.total_tokens
@@ -158,6 +173,9 @@ def compare_bundles(bundle_a: SubmissionBundle, bundle_b: SubmissionBundle) -> C
             )
         )
 
+    refused_a = sum(1 for r in bundle_a.task_results if r.harness_output.get("refusal") == "budget_exceeded")
+    refused_b = sum(1 for r in bundle_b.task_results if r.harness_output.get("refusal") == "budget_exceeded")
+
     return CompareResult(
         bundle_a_hash=bundle_a.bundle_hash(),
         bundle_b_hash=bundle_b.bundle_hash(),
@@ -178,4 +196,6 @@ def compare_bundles(bundle_a: SubmissionBundle, bundle_b: SubmissionBundle) -> C
         duration_b_seconds=dur_b,
         duration_delta_seconds=dur_delta,
         task_comparisons=task_cmps,
+        refused_a=refused_a,
+        refused_b=refused_b,
     )

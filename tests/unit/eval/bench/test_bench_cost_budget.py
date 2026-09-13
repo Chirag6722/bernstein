@@ -9,6 +9,7 @@ Acceptance Criteria:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.eval.bench.bench_cli import bench_group
-from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult, harness_fingerprint
 from bernstein.eval.bench.compare import compare_bundles
 from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
@@ -134,17 +135,59 @@ class TestPreExistingBundlesStillLoad:
     written before they existed carries none, and its stored hash was computed
     without them; emitting zeros on reload would fail its own integrity check."""
 
-    def test_bundle_without_resource_metrics_round_trips_through_its_stored_hash(self, tmp_path: Path) -> None:
-        bundle = _make_sample_bundle(task_specs=[{"id": "t1", "tokens": 0, "cost_usd": 0.0, "duration_seconds": 0.0}])
-        raw = bundle.to_dict()
-        assert "tokens" not in raw["task_results"][0]
-        assert "cost_usd" not in raw["task_results"][0]
-        # This is byte-for-byte what a pre-#5464 writer produced for the same task.
-        p = tmp_path / "old.json"
-        p.write_text(json.dumps(raw, indent=2, sort_keys=True), encoding="utf-8")
+    def test_a_bundle_written_before_the_cost_fields_existed_loads_hashes_and_verifies(self, tmp_path: Path) -> None:
+        """The fixture is the document a pre-#5464 writer produced, not one the
+        new ``to_dict()`` produced: no ``tokens``/``cost_usd``/``duration_seconds``
+        on the task, no ``total_*`` on the bundle. Only the four digests are
+        computed here, by that writer's own (unchanged) rules. ``load`` raises
+        on a stored-hash mismatch, so the first assertion is the load itself."""
+        from bernstein.eval.bench.verifier import BenchVerifier, VerificationStatus
+
+        def canon(obj: object) -> bytes:
+            return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+        suite = BenchSuite(
+            version="legacy-v1",
+            tasks=[BenchTask(id="t1", description="written before #5464", steps=(), assertions=())],
+        )
+        receipt = {"journal_head": "j" * 64, "spine_head": "s" * 64, "run_id": "legacy-run", "events": []}
+        task_row = {
+            "task_id": "t1",
+            "task_hash": suite.tasks[0].content_hash(),
+            "receipt": receipt,
+            "receipt_hash": hashlib.sha256(canon(receipt)).hexdigest(),
+            "passed": True,
+            "score": 1.0,
+            "harness_output": {"note": "legacy"},
+        }
+        payload = {
+            "suite_hash": suite.suite_hash,
+            "suite_version": "legacy-v1",
+            "submitted_at": 1700000000.0,
+            "scheduler_config": {"scheduler": "default"},
+            "task_results": [task_row],
+        }
+        legacy = {
+            "bundle_hash": hashlib.sha256(canon(payload)).hexdigest(),
+            **payload,
+            "harness_fingerprint": harness_fingerprint({"scheduler": "default"}),
+            "overall_score": 1.0,
+            "pass_rate": 1.0,
+            "signature": "",
+            "signer_fingerprint": "",
+        }
+        assert not {"total_tokens", "total_cost_usd", "total_duration_seconds"} & legacy.keys()
+        assert not {"tokens", "cost_usd", "duration_seconds"} & task_row.keys()
+        p = tmp_path / "legacy.json"
+        p.write_text(json.dumps(legacy, indent=2, sort_keys=True), encoding="utf-8")
+
         loaded = SubmissionBundle.load(p)
-        assert loaded.bundle_hash() == bundle.bundle_hash()
+        assert loaded.bundle_hash() == legacy["bundle_hash"]
+        # Re-saving emits no zeros: the task record keeps the legacy key set.
+        assert loaded.to_dict()["task_results"][0].keys() == task_row.keys()
         assert loaded.total_cost_usd == 0.0
+        result = BenchVerifier(suite=suite, adapter=MockReplayAdapter()).verify(loaded)
+        assert result.status is VerificationStatus.MATCH, result.report()
 
     def test_bundle_with_resource_metrics_binds_them_into_the_hash(self) -> None:
         a = _make_sample_bundle(task_specs=[{"id": "t1", "cost_usd": 0.01}])
@@ -231,7 +274,10 @@ class TestBundleComparison:
         for fmt in ("text", "markdown", "json"):
             result = CliRunner().invoke(bench_group, ["compare", str(p1), str(p2), "--format", fmt])
             assert result.exit_code == 1, (fmt, result.output)
-            assert "Refusing to rank" in result.output
+            # Text keeps the verdict on stdout; a machine-readable format owns
+            # stdout, so the verdict goes to stderr there.
+            stream = result.stdout if fmt == "text" else result.stderr
+            assert "Refusing to rank" in stream, (fmt, result.output)
 
     def test_cli_compare_of_bundles_without_metrics_reads_as_before(self, tmp_path: Path) -> None:
         """A pre-#5464 pair (no resource metrics) prints no cost block at all."""
@@ -243,6 +289,37 @@ class TestBundleComparison:
         result = CliRunner().invoke(bench_group, ["compare", str(p1), str(p2)])
         assert result.exit_code == 0, result.output
         assert "Cost     :" not in result.output
+
+    def test_cost_delta_percent_is_not_a_number_when_a_cost_nothing(self) -> None:
+        """$0 -> $0.05 is not a 0.0% change."""
+        a = _make_sample_bundle(task_specs=[{"id": "t1", "cost_usd": 0.0, "tokens": 0, "duration_seconds": 0.0}])
+        b = _make_sample_bundle(task_specs=[{"id": "t1", "cost_usd": 0.05}])
+        cmp = compare_bundles(a, b)
+        assert cmp.cost_delta_percent is None
+        assert cmp.to_dict()["cost_delta_percent"] is None
+        assert "$+0.0500 (n/a)" in cmp.to_markdown()
+
+    def test_compare_reports_how_many_tasks_a_budget_refused(self, tmp_path: Path) -> None:
+        """A budget-cut run is cheaper than a complete one only because tasks never ran."""
+        from bernstein.eval.bench.golden_suite import build_golden_suite_v1
+
+        suite = build_golden_suite_v1()
+        complete = BenchRunner(suite=suite, adapter=MockReplayAdapter(), scheduler_config={"scheduler": "s"}).run()
+        cut = BenchRunner(
+            suite=suite, adapter=MockReplayAdapter(), scheduler_config={"scheduler": "s"}, budget_usd=0.001
+        ).run()
+        cmp = compare_bundles(complete, cut)
+        assert cmp.refused_a == 0
+        assert cmp.refused_b == sum(1 for r in cut.task_results if r.harness_output.get("refusal"))
+        assert cmp.refused_b > 0
+        assert "| **Refused (budget)** | 0 |" in cmp.to_markdown()
+
+        p1, p2 = tmp_path / "complete.json", tmp_path / "cut.json"
+        complete.save(p1)
+        cut.save(p2)
+        result = CliRunner().invoke(bench_group, ["compare", str(p1), str(p2)])
+        assert result.exit_code == 0, result.output
+        assert f"Refused  : 0 -> {cmp.refused_b} tasks never ran (budget)" in result.output
 
     def test_compare_is_registered_once(self) -> None:
         """Click keeps the last registration; a second `compare` would silently
@@ -318,6 +395,17 @@ class TestBudgetGate:
         )
         assert result.exit_code == 0, result.output
         assert "Budget exceeded" not in result.output
+
+    def test_budget_with_reliability_is_refused_not_ignored(self, tmp_path: Path) -> None:
+        """The reliability runner enforces no budget; accepting the flag and
+        running K attempts uncapped would be a spend cap that vanished."""
+        result = CliRunner().invoke(
+            bench_group,
+            ["run", "golden-v1", "--out", str(tmp_path / "r.json"), "--reliability", "2", "--budget", "1"],
+        )
+        assert result.exit_code != 0
+        assert "--budget is not enforced on the --reliability path" in result.output
+        assert not (tmp_path / "r.json").exists()
 
     def test_refused_tasks_verify_as_refused_not_as_fabricated(self, tmp_path: Path) -> None:
         """A refusal receipt is a verifiable receipt: replaying it must agree

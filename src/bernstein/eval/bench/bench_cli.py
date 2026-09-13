@@ -105,7 +105,7 @@ def bench_group() -> None:
     "--budget",
     type=float,
     default=None,
-    help="Stop runner if cumulative cost exceeds this USD limit.",
+    help="Stop running tasks once cumulative cost reaches this USD limit. Not combined with --reliability.",
 )
 def bench_run(
     suite: str,
@@ -134,6 +134,13 @@ def bench_run(
     click.echo(f"Tasks       : {len(suite_obj.tasks)}")
 
     if reliability_k is not None:
+        # The reliability runner does not enforce a budget. A cap that is
+        # accepted and not applied is worse than one that is refused.
+        if budget is not None:
+            raise click.ClickException(
+                "--budget is not enforced on the --reliability path. "
+                "Run without --reliability to cap spend, or without --budget to measure pass^k."
+            )
         _run_reliability(suite_obj, scheduler, reliability_k, Path(out), stub_signer)
         return
 
@@ -330,13 +337,15 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool, output_format: str)
         click.echo("")
         click.echo(
             f"Cost     : ${report.cost_a_usd:.4f} -> ${report.cost_b_usd:.4f} "
-            f"({report.cost_delta_usd:+.4f}, {report.cost_delta_percent:+.1f}%)"
+            f"({report.cost_delta_usd:+.4f}, {report.cost_delta_percent_text()})"
         )
         click.echo(f"Tokens   : {report.tokens_a:,} -> {report.tokens_b:,} ({report.tokens_delta:+,})")
         click.echo(
             f"Duration : {report.duration_a_seconds:.2f}s -> {report.duration_b_seconds:.2f}s "
             f"({report.duration_delta_seconds:+.2f}s)"
         )
+        if report.refused_a or report.refused_b:
+            click.echo(f"Refused  : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
 
 
 # ---------------------------------------------------------------------------
