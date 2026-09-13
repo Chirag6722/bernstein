@@ -3,9 +3,17 @@ bernstein-bench: gate-evasion benchmark suite.
 
 Every way an agent change previously fooled or evaded a quality gate
 becomes a fixture the gate must catch. This suite loads evasion cases
-dynamically from ``src/bernstein/eval/cases/gate_evasion/``, runs them against
-quality gates, measures catch rate, reports missed classes and responsible gates,
-and produces signed submission bundles.
+from ``src/bernstein/eval/cases/gate_evasion/``, materialises each one into
+a scratch working directory, runs the gate its manifest names through
+:class:`bernstein.core.quality.gate_runner.GateRunner`, and records what
+that gate actually returned. Catch rate is the share of cases whose gate
+returned ``fail``; a missed case names the gate that should have flagged
+it, and a case whose manifest names a gate that does not exist is missed
+with that as the reason.
+
+There is no simulated verdict anywhere in this module. The first cut of
+this suite defaulted to "caught" when no evaluator was supplied, which
+made a 100% catch rate a tautology (#5448 review, F1).
 
 Adding a new evasion class requires no Python changes: placing a new fixture
 directory with a valid ``manifest.json`` is automatically discovered.
@@ -13,7 +21,13 @@ directory with a valid ``manifest.json`` is automatically discovered.
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
+import re
+import shutil
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,6 +37,44 @@ from bernstein.eval.bench.suite import BenchSuite, BenchTask
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+#: Registry controls this suite measures: gate-evasion resistance, and the
+#: benchmark reproducibility every suite carries.
+GATE_EVASION_SUITE_CONTROLS = ("CTL-SEC-04", "CTL-EVAL-01")
+
+#: Gates GateRunner can dispatch by name. A manifest naming anything else is
+#: reported as "no such gate", never silently counted as caught.
+GATE_RUNNER_GATES = frozenset(
+    {
+        "auto_format",
+        "complexity_check",
+        "dead_code",
+        "comment_quality",
+        "import_cycle",
+        "coverage_delta",
+        "merge_conflict",
+        "large_file",
+        "run_config",
+        "benchmark",
+        "migration_reversibility",
+        "lint",
+        "type_check",
+        "tests",
+        "security_scan",
+        "pii_scan",
+        "dlp_scan",
+        "mutation_testing",
+        "dep_audit",
+    }
+)
+
+_PATCH_PATH_RE = re.compile(r"^(?:---|\+\+\+) [ab]/(\S+)", re.MULTILINE)
+
+#: The Python module each command gate shells out to. Checked before the gate
+#: runs: a gate whose tool is not installed cannot have caught anything, and
+#: the dead-code gate reports a missing vulture as ``fail`` -- which would
+#: count as a catch. Here it is ``command_not_found``, a miss with a reason.
+_GATE_TOOL_MODULE = {"lint": "ruff", "dead_code": "vulture", "tests": "pytest", "type_check": "pyright"}
 
 # ---------------------------------------------------------------------------
 # Default corpus directory
@@ -167,6 +219,132 @@ def build_gate_evasion_suite_v1(
 
 
 # ---------------------------------------------------------------------------
+# Running one case through the real gate
+# ---------------------------------------------------------------------------
+
+
+def materialise_case(case: GateEvasionCase, into: Path) -> list[str]:
+    """Lay the fixture out as a working tree and return its changed files.
+
+    Every file in the fixture directory except ``manifest.json`` is copied
+    as-is. A ``diff.patch`` is not applied -- the fixture directory *is* the
+    post-change state -- but the paths it names are the change set, which
+    is how a deletion reaches a gate: the file is absent from the tree and
+    present in ``changed_files``.
+    """
+    changed: list[str] = []
+    for name in case.sample_files:
+        src = case.case_dir / name
+        if name == "diff.patch":
+            changed.extend(dict.fromkeys(_PATCH_PATH_RE.findall(src.read_text(encoding="utf-8"))))
+            continue
+        dst = into / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        changed.append(name)
+    return list(dict.fromkeys(changed))
+
+
+def _hermetic_config() -> Any:
+    """A QualityGatesConfig whose tools run through this interpreter.
+
+    The gates' defaults reach for ``uv run``; inside a benchmark the tool that
+    is measured must not depend on a launcher being on PATH.
+    """
+    from bernstein.core.quality.quality_gates import QualityGatesConfig
+
+    py = sys.executable
+    return QualityGatesConfig(
+        lint_command=f"{py} -m ruff check .",
+        dead_code_command=f"{py} -m vulture",
+        test_command=f"{py} -m pytest -x -q -p no:cacheprovider",
+        cache_enabled=False,
+        timeout_s=120,
+    )
+
+
+def _scrub(detail: str, scratch: Path) -> str:
+    """Make gate output reproducible: no scratch path, no timings."""
+    text = detail.replace(str(scratch), "<case>").replace(scratch.as_posix(), "<case>")
+    text = re.sub(r"\b\d+(?:\.\d+)?s\b", "<t>", text)
+    # pytest prints mock reprs with a per-process id and objects with an
+    # address; neither is part of the verdict.
+    text = re.sub(r"id='\d+'", "id='<n>'", text)
+    text = re.sub(r"0x[0-9A-Fa-f]{6,}", "0x<addr>", text)
+    return text[:2000]
+
+
+def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
+    """Run *case* through the gate its manifest names and report what it said.
+
+    ``caught`` is true only when the gate returned ``fail``. ``pass`` is a
+    miss (the evasion worked), and so are ``skipped``, ``command_not_found``
+    and ``inconclusive`` -- each recorded verbatim in ``actual_verdict`` so
+    a miss says *why* the gate did not flag it.
+    """
+    from bernstein.core.models import Task
+    from bernstein.core.quality.gate_pipeline import GatePipelineStep
+    from bernstein.core.quality.gate_runner import GateRunner
+
+    gate = case.gate_that_must_flag
+    if gate not in GATE_RUNNER_GATES:
+        return GateEvasionResult(
+            case_class=case.class_name,
+            gate_that_must_flag=gate,
+            expected_verdict=case.expected_verdict,
+            caught=False,
+            actual_verdict="no_gate",
+            details=f"GateRunner has no gate named {gate!r}; nothing can flag this class today.",
+        )
+
+    tool = _GATE_TOOL_MODULE.get(gate)
+    if tool is not None and importlib.util.find_spec(tool) is None:
+        return GateEvasionResult(
+            case_class=case.class_name,
+            gate_that_must_flag=gate,
+            expected_verdict=case.expected_verdict,
+            caught=False,
+            actual_verdict="command_not_found",
+            details=f"the {gate} gate runs {tool}, which is not installed in this environment",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="gate-evasion-") as tmp:
+        scratch = Path(tmp)
+        changed = materialise_case(case, scratch)
+        runner = GateRunner(_hermetic_config(), scratch)
+        override = None
+        if gate == "tests":
+            # The impacted-test analyser needs a repository; the fixture is
+            # not one. Run the fixture's own tests, which is what the gate
+            # would have selected.
+            tests = [f for f in changed if Path(f).name.startswith("test_") and f.endswith(".py")]
+            if not tests:
+                return GateEvasionResult(
+                    case_class=case.class_name,
+                    gate_that_must_flag=gate,
+                    expected_verdict=case.expected_verdict,
+                    caught=False,
+                    actual_verdict="skipped",
+                    details="the change carries no test file for the tests gate to run",
+                )
+            override = f"{sys.executable} -m pytest {' '.join(tests)} -x -q -p no:cacheprovider"
+        step = GatePipelineStep(name=gate, required=True, command_override=override)
+        task = Task(
+            id=f"gate-evasion-{case.class_name}", title=case.class_name, description=case.description, role="qa"
+        )
+        result = asyncio.run(runner.run_gate(step, task, scratch, changed))
+        return GateEvasionResult(
+            case_class=case.class_name,
+            gate_that_must_flag=gate,
+            expected_verdict=case.expected_verdict,
+            caught=result.status == "fail",
+            actual_verdict=result.status,
+            flagged_by_gate=gate if result.status == "fail" else "",
+            details=_scrub(result.details or "", scratch),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Scoring and results
 # ---------------------------------------------------------------------------
 
@@ -266,23 +444,26 @@ def score_gate_evasion(
 
 def run_gate_evasion_suite(
     corpus_dir: Path | str | None = None,
-    evaluator: Callable[[GateEvasionCase], tuple[bool, str, str]] | None = None,
+    evaluator: Callable[[GateEvasionCase], GateEvasionResult] | None = None,
     scheduler_config: dict[str, Any] | None = None,
 ) -> tuple[GateEvasionScore, SubmissionBundle]:
-    """Execute gate evasion suite and return the score and signed SubmissionBundle.
+    """Run every case through its gate and return the score and an unsigned bundle.
 
     Args:
         corpus_dir: Optional custom corpus directory path.
-        evaluator: Optional callable ``(case) -> (caught: bool, actual_verdict: str, details: str)``.
-            If omitted, defaults to catching all cases where expected_verdict is 'fail'.
+        evaluator: ``(case) -> GateEvasionResult``. Defaults to
+            :func:`evaluate_with_gate_runner`, which runs the real gate. Tests
+            of the scorer may pass their own; nothing else should.
         scheduler_config: Optional scheduler configuration dictionary.
 
     Returns:
-        Tuple of (:class:`GateEvasionScore`, :class:`SubmissionBundle`).
+        Tuple of (:class:`GateEvasionScore`, :class:`SubmissionBundle`). The
+        bundle is unsigned; ``bench run`` signs it.
     """
     suite = build_gate_evasion_suite_v1(corpus_dir=corpus_dir)
     cases = load_evasion_corpus(corpus_dir=corpus_dir)
     case_map = {f"gate_evasion_{c.class_name}": c for c in cases}
+    evaluate = evaluator or evaluate_with_gate_runner
 
     results: list[GateEvasionResult] = []
     task_results: list[TaskResult] = []
@@ -292,23 +473,8 @@ def run_gate_evasion_suite(
         if case is None:
             continue
 
-        if evaluator is not None:
-            caught, actual_verdict, details = evaluator(case)
-        else:
-            # Default simulation behaviour: designated gate flags the evasion
-            caught = True
-            actual_verdict = case.expected_verdict
-            details = f"Gate {case.gate_that_must_flag} flagged evasion correctly."
-
-        res = GateEvasionResult(
-            case_class=case.class_name,
-            gate_that_must_flag=case.gate_that_must_flag,
-            expected_verdict=case.expected_verdict,
-            caught=caught,
-            actual_verdict=actual_verdict,
-            flagged_by_gate=case.gate_that_must_flag if caught else "",
-            details=details,
-        )
+        res = evaluate(case)
+        caught, actual_verdict, details = res.caught, res.actual_verdict, res.details
         results.append(res)
 
         # Build TaskResult for submission bundle
@@ -343,3 +509,52 @@ def run_gate_evasion_suite(
         scheduler_config=scheduler_config or {"scheduler": "deterministic"},
     )
     return score_obj, bundle
+
+
+# ---------------------------------------------------------------------------
+# bench adapter: what `bench run gate-evasion-v1` / `bench verify` go through
+# ---------------------------------------------------------------------------
+
+
+class GateEvasionReplayAdapter:
+    """Runs each task's fixture through its gate; replays the verdict from the receipt.
+
+    ``run_task`` executes the gate and records its status and scrubbed
+    output. ``score_task`` -- the path ``bench verify`` replays through --
+    re-derives the verdict from the receipt alone, so a bundle verifies
+    without re-running the gates, and a receipt whose status is anything
+    but ``fail`` scores zero.
+    """
+
+    def __init__(self, corpus_dir: Path | str | None = None) -> None:
+        self._cases = {f"gate_evasion_{c.class_name}": c for c in load_evasion_corpus(corpus_dir)}
+
+    def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
+        case = self._cases.get(task.id)
+        if case is None:
+            raise ValueError(f"task {task.id!r} names no case in the gate-evasion corpus")
+        res = evaluate_with_gate_runner(case)
+        return {
+            "journal_head": "",
+            "spine_head": "",
+            "run_id": f"gate-evasion-{task.content_hash()[:12]}",
+            "case_class": res.case_class,
+            "gate_that_must_flag": res.gate_that_must_flag,
+            "status": res.actual_verdict,
+            "caught": res.caught,
+            "details": res.details,
+        }
+
+    def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
+        status = receipt.get("status")
+        caught = status == "fail"
+        return (
+            caught,
+            1.0 if caught else 0.0,
+            {
+                "gate": receipt.get("gate_that_must_flag", ""),
+                "status": status,
+                "caught": caught,
+                "details": receipt.get("details", ""),
+            },
+        )

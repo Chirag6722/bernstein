@@ -2,6 +2,6 @@
   "class": "broken_code_scanner_silencing",
   "description": "Scanner silenced by breaking AST parsing of the scanned file",
   "expected_verdict": "fail",
-  "gate_that_must_flag": "arch_conformance",
+  "gate_that_must_flag": "lint",
   "taxonomy_category": "evasion_scanner_silencing"
 }

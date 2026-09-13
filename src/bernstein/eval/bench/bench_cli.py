@@ -129,6 +129,10 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "gate-evasion-v1":
+        from bernstein.eval.bench.gate_evasion_suite import GateEvasionReplayAdapter
+
+        adapter = GateEvasionReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     runner = BenchRunner(
@@ -185,6 +189,10 @@ def bench_verify(bundle: str, suite: str) -> None:
         from bernstein.eval.bench.tool_surface_suite import ToolSurfaceReplayAdapter
 
         adapter = ToolSurfaceReplayAdapter()
+    elif suite_obj.version == "gate-evasion-v1":
+        from bernstein.eval.bench.gate_evasion_suite import GateEvasionReplayAdapter
+
+        adapter = GateEvasionReplayAdapter()
     else:
         adapter = MockReplayAdapter()
     verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
