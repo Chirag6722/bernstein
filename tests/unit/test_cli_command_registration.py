@@ -24,6 +24,11 @@ from click.testing import CliRunner
 
 from bernstein.cli.main import cli
 
+#: The tree-wide guard scans ``src/`` rather than importing it, so no diff
+#: produces an import edge to this file. The marker puts it in every pull
+#: request's affected slice instead of only the merge group (#5428).
+pytestmark = pytest.mark.whole_tree_guard
+
 _MAIN_PY = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "cli" / "main.py"
 _SRC = Path(__file__).resolve().parents[2] / "src" / "bernstein"
 NL = chr(10)
