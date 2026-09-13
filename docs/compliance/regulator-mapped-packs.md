@@ -103,19 +103,9 @@ Bernstein maintains a centralized taxonomy of compliance, security, and governan
 - **ISO/IEC 42001**: Artificial Intelligence Management System (Annex A).
 - **FINOS AIGF**: Open-source AI Governance Framework for Financial Services.
 
-The registry is the one place a control is defined. Anything that claims to
-measure a control -- an evaluation suite, an evidence pack, an assessment
-export -- names it by its registry id, and a name the registry does not
-know is refused rather than recorded.
-
 ### Suite Control Declarations & Build-Time Enforcement
 
-Every benchmark evaluation suite (`BenchSuite`) declares the registry ids
-of the controls it measures. The declaration is part of suite identity --
-canonicalised, so order and repeats do not matter -- and is enforced where
-every `bench` subcommand resolves its suite: a suite that declares no
-control, or a control the registry does not know, cannot run, score, or
-publish a bundle, built-in and `.json` suites alike.
+Every benchmark evaluation suite (`BenchSuite`) must declare the standard control IDs it measures. Any suite that omits controls or references unregistered control IDs fails build-time validation:
 
 ```python
 from bernstein.eval.bench.suite import BenchSuite
@@ -125,16 +115,18 @@ suite = BenchSuite(
     tasks=tasks,
     controls=["CTL-ROB-01", "CTL-EVAL-01", "CTL-EVAL-02", "CTL-QUAL-02"],
 )
-suite.validate_controls()  # raises on an empty or unregistered declaration
+suite.validate_controls()  # Fails build if invalid or unmapped
 ```
 
 ### CLI Inspection & Coverage
+
+Inspect the control registry and evaluation suite coverage using the CLI:
 
 ```bash
 # List all registered controls in text format
 bernstein compliance controls
 
-# Show which built-in benchmark suites declare each control
+# Show benchmark suite coverage
 bernstein compliance controls --coverage
 
 # Filter by regulatory framework in JSON or Markdown format
@@ -182,3 +174,21 @@ bernstein compliance controls --format markdown
 | CTL-DEP-01 | Air-Gapped & Offline Verification Support | EU_AI_ACT, FINOS_AIGF, ISO_42001, NIST_AI_RMF | verifier_receipt | *(uncovered)* |
 <!-- controls-table:end -->
 
+## Benchmark Bundles in Evidence Packs
+
+`bernstein compliance pack` embeds the signed benchmark bundles it finds and reports, per registered control, whether a bundle from a suite that declares that control was found.
+
+`bernstein-bench run` writes its bundle wherever `--out` points (default `bundle.json` in the working directory); place the bundles a pack should carry under `.sdd/bench/bundles/` -- the file name is free, the pack keys them by bundle hash:
+
+```bash
+bernstein-bench run golden-v1 --out .sdd/bench/bundles/golden-v1.json
+bernstein-bench run tool-surface-v1 --out .sdd/bench/bundles/tool-surface-v1.json
+```
+
+What the pack does and does not assert:
+
+- **Source.** Every `*.json` under `.sdd/bench/bundles/` is loaded through `SubmissionBundle.from_dict`, which recomputes every task's receipt hash and the bundle hash and raises on mismatch. The pack embeds each bundle that loads **byte-for-byte** under `bench-bundles/<bundle-hash>.json`; it is not re-serialised, so the embedded copy still passes `bernstein-bench verify`.
+- **Unreadable bundles are recorded, not dropped.** `controls.json` lists them under `bench_bundles_unreadable` as `{"path", "reason"}`, so an auditor sees that they exist and were not assessed.
+- **Control mapping goes through the suite.** A bundle names its suite (`suite_version`); the suite declares its controls (see the table above). `controls.json` carries `bench_assessment`: a control is `measured` when a bundle from a suite declaring it is present (the most recently listed such bundle), else `declared_not_measured`, each with a reason. Bundles from a suite that is not built in cannot be mapped from here and are listed in `bench_assessment._unresolvable_suites`.
+- **`verify_evidence_pack`** checks the manifest's artefact hashes and re-runs every embedded bundle through `SubmissionBundle.from_dict`, the same hash check `bernstein-bench verify` starts with.
+- **What is not verified.** Neither the pack verifier nor `bernstein-bench verify` checks a bundle's `signature`; only reliability receipts carry a trusted-key check today (#5856). Treat an embedded bundle as hash-consistent evidence of what was run, not as attested by a known key.
