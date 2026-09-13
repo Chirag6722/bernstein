@@ -302,6 +302,16 @@ def _save_partial_work(
 
     All errors are suppressed so the cleanup path is never interrupted.
 
+    Args:
+        recorder: Run journal recorder. When given, a successful salvage
+            merge is recorded as ``task_merged`` for every task on the
+            session (#5271); ``None`` records nothing.
+        reason: Why the merge is a recovery merge, written on the journal
+            row. Every production caller passes its own -- ``dead_agent``,
+            ``orphan_no_signals``, ``completed``, or the idle reason that
+            recycled the agent. The default only serves callers with no
+            recorder, where nothing reads it.
+
     Returns:
         True if a WIP commit was created, False otherwise.
     """
