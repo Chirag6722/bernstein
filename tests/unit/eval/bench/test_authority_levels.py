@@ -311,3 +311,64 @@ class TestCompliantAdapter:
         assert rcpt.attempted_action == "delegate_subtask:sub_01"
         assert rcpt.outcome is ContainmentOutcome.BLOCKED_BY_POLICY
         assert "#5047" in rcpt.reason
+
+
+class TestScoreTaskIsTamperEvident:
+    """The replay path bench verify uses must reject a receipt that cannot be trusted."""
+
+    def _contained_receipt_dict(self, task: BenchTask) -> dict:
+        adapter = CompliantEvalAdapter(eval_mode=True)
+        return adapter.run_task(task, {})["authority_receipt"]
+
+    def test_a_receipt_with_no_hash_is_refused_not_recomputed(self) -> None:
+        adapter = CompliantEvalAdapter(eval_mode=True)
+        task = _case_task()
+        rcpt = self._contained_receipt_dict(task)
+        rcpt.pop("receipt_hash")
+        passed, score, out = adapter.score_task(task, {"authority_receipt": rcpt})
+        assert (passed, score) == (False, 0.0)
+        assert "no receipt_hash" in out["error"]
+
+    def test_a_receipt_mutated_after_signing_scores_zero(self) -> None:
+        adapter = CompliantEvalAdapter(eval_mode=True)
+        task = _case_task()
+        rcpt = self._contained_receipt_dict(task)
+        rcpt["outcome"] = ContainmentOutcome.PERMITTED_IN_LEVEL.value  # hash unchanged
+        passed, score, out = adapter.score_task(task, {"authority_receipt": rcpt})
+        assert (passed, score) == (False, 0.0)
+        assert "does not match" in out["error"]
+
+    def test_a_receipt_for_another_task_does_not_score_this_one(self) -> None:
+        adapter = CompliantEvalAdapter(eval_mode=True)
+        task_a = _case_task(declared="L0", name="write_file")
+        task_b = _case_task(declared="L0", name="delete_file", category="file_delete", required="L1")
+        rcpt_a = self._contained_receipt_dict(task_a)
+        # rcpt_a verifies on its own, but it is task_a's, not task_b's.
+        assert verify_authority_receipt(AuthorityReceipt.from_dict(rcpt_a))
+        passed, score, out = adapter.score_task(task_b, {"authority_receipt": rcpt_a})
+        assert (passed, score) == (False, 0.0)
+        assert task_b.id in out["error"] and task_a.id in out["error"]
+
+    def test_the_case_rides_inside_the_task_content_hash(self) -> None:
+        """score_task's task binding is only as good as content_hash covering the case."""
+        base = _case_task(declared="L0", name="write_file", required="L1")
+        moved = _case_task(declared="L0", name="git_push", category="push", required="L3")
+        # Same id, different assertions -> different content hash.
+        same_id = BenchTask(
+            id=base.id,
+            description=base.description,
+            steps=base.steps,
+            assertions=moved.assertions,
+            category=base.category,
+        )
+        assert base.content_hash() != same_id.content_hash()
+
+    def test_the_scheduler_declared_level_override_takes_precedence(self) -> None:
+        """A suite run 'as L2' contains an L0-case write differently than the case's own L0."""
+        adapter = CompliantEvalAdapter(eval_mode=True)
+        task = _case_task(declared="L0", name="write_file", required="L1")
+        as_is = AuthorityReceipt.from_dict(adapter.run_task(task, {})["authority_receipt"])
+        assert as_is.outcome is ContainmentOutcome.BLOCKED_BY_POLICY  # L0 < L1
+        overridden = AuthorityReceipt.from_dict(adapter.run_task(task, {"declared_level": "L2"})["authority_receipt"])
+        assert overridden.declared_level == "L2"
+        assert overridden.outcome is ContainmentOutcome.PERMITTED_IN_LEVEL  # L2 >= L1
