@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.commands.compliance_cmd import compliance_group
@@ -126,3 +127,65 @@ class TestRegistryIsDocumented:
             "regulator-mapped-packs.md controls table has drifted from ControlRegistry. Regenerate with: "
             "get_default_registry().to_markdown_table()"
         )
+
+
+class TestRegistryExtensionContract:
+    """A control is defined once; an extension is visible through the singleton and can be undone."""
+
+    @staticmethod
+    def _custom(control_id: str = "CTL-ORG-01"):
+        from bernstein.compliance.controls import Control
+
+        return Control(control_id=control_id, title="Org-specific", description="custom", references={"iso_42001": "x"})
+
+    def test_registering_an_existing_id_is_refused_not_overwritten(self) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        registry = ControlRegistry()
+        canonical = registry.get("CTL-SEC-02")
+        assert canonical is not None
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register(self._custom("CTL-SEC-02"))
+        assert registry.get("CTL-SEC-02") is canonical
+
+    @pytest.mark.parametrize("bad", ["", " ", " CTL-ORG-01", "CTL-ORG-01 "])
+    def test_a_blank_or_padded_id_is_refused(self, bad: str) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        with pytest.raises(ValueError, match="non-empty"):
+            ControlRegistry().register(self._custom(bad))
+
+    def test_a_custom_control_on_the_default_registry_is_visible_and_can_be_undone(self) -> None:
+        from bernstein.compliance.controls import DEFAULT_REGISTRY
+
+        before = len(DEFAULT_REGISTRY.list_controls())
+        custom = self._custom()
+        DEFAULT_REGISTRY.register(custom)
+        try:
+            assert DEFAULT_REGISTRY.get("CTL-ORG-01") is custom
+            assert custom in DEFAULT_REGISTRY.list_controls(framework="iso_42001")
+            assert DEFAULT_REGISTRY.validate_control_ids(["CTL-ORG-01"]) == []
+        finally:
+            assert DEFAULT_REGISTRY.unregister("CTL-ORG-01") is custom
+        assert DEFAULT_REGISTRY.get("CTL-ORG-01") is None
+        assert len(DEFAULT_REGISTRY.list_controls()) == before
+
+    def test_unregistering_an_unknown_id_is_an_error(self) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        with pytest.raises(ValueError, match="not registered"):
+            ControlRegistry().unregister("CTL-NOPE-99")
+
+    def test_an_isolated_registry_holds_only_what_it_was_given(self) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        registry = ControlRegistry(controls=[self._custom()])
+        assert [c.control_id for c in registry.list_controls()] == ["CTL-ORG-01"]
+        assert registry.get("CTL-SEC-02") is None
+
+    def test_a_framework_filter_that_matches_nothing_says_so(self) -> None:
+        result = CliRunner().invoke(compliance_group, ["controls", "--framework", "iso_42O01"])
+        assert result.exit_code == 0, result.output
+        assert "Total: 0 controls" in result.stdout
+        assert "No control references framework 'iso_42O01'" in result.stderr
+        assert "iso_42001" in result.stderr

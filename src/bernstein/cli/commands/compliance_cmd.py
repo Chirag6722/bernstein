@@ -955,6 +955,10 @@ def controls_command(framework: str | None, output_format: str) -> None:
 
     registry = get_default_registry()
     controls = registry.list_controls(framework=framework)
+    if framework and not controls:
+        # A typo must not read as "no controls for this framework".
+        known = sorted({k for c in registry.list_controls() for k in c.references})
+        click.echo(f"No control references framework {framework!r}; known frameworks: {', '.join(known)}", err=True)
 
     if output_format == "json":
         click.echo(json.dumps([c.to_dict() for c in controls], indent=2))

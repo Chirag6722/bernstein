@@ -556,7 +556,12 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
 
 
 class ControlRegistry:
-    """Registry of standard and custom compliance controls."""
+    """Registry of standard and custom compliance controls.
+
+    ``ControlRegistry()`` starts from :data:`STANDARD_CONTROLS`;
+    ``ControlRegistry(controls=[...])`` starts from exactly those controls
+    and nothing else, which is what an isolated test registry wants.
+    """
 
     def __init__(self, controls: Iterable[Control] | None = None) -> None:
         self._controls: dict[str, Control] = {}
@@ -568,8 +573,27 @@ class ControlRegistry:
                 self.register(c)
 
     def register(self, control: Control) -> None:
-        """Register a control in the registry."""
-        self._controls[control.control_id] = control
+        """Register a control; a control is defined here and nowhere else.
+
+        Refuses an ID that is already registered: a plugin or an import-order
+        accident re-registering ``CTL-SEC-02`` would otherwise replace the
+        canonical definition process-wide, and every compliance claim made
+        against that ID afterwards would mean something else. A blank ID is
+        refused for the same reason -- it can never be cited.
+        """
+        control_id = control.control_id
+        if not control_id or control_id != control_id.strip():
+            raise ValueError(f"control id must be non-empty with no surrounding whitespace, got {control_id!r}")
+        if control_id in self._controls:
+            raise ValueError(f"control {control_id!r} is already registered; unregister it first to redefine it")
+        self._controls[control_id] = control
+
+    def unregister(self, control_id: str) -> Control:
+        """Remove and return a control, so an extension can be undone leak-free."""
+        try:
+            return self._controls.pop(control_id)
+        except KeyError:
+            raise ValueError(f"control {control_id!r} is not registered") from None
 
     def get(self, control_id: str) -> Control | None:
         """Look up a control by ID."""
