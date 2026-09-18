@@ -316,7 +316,13 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool, output_format: str)
     # across differing harness settings is as meaningless as a score delta.
     from bernstein.eval.bench.compare import compare_bundles
 
-    report = compare_bundles(bundle_a, bundle_b)
+    try:
+        report = compare_bundles(bundle_a, bundle_b)
+    except ValueError as exc:
+        if not allow_harness_drift:
+            raise
+        click.echo(f"--allow-harness-drift: {exc}", err=to_stderr)
+        report = compare_bundles(bundle_a, bundle_b, check_fingerprint=False)
     if output_format == "json":
         click.echo(json.dumps(report.to_dict(), indent=2, sort_keys=True))
         return

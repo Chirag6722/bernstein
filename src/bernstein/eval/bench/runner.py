@@ -222,7 +222,7 @@ class BenchRunner:
             passed, score, harness_output = self.adapter.score_task(task, receipt)
 
             tokens = int(receipt.get("tokens", 0))
-            cost_usd = float(receipt.get("cost_usd", 0.0))
+            cost_usd = max(0.0, float(receipt.get("cost_usd", 0.0)))
             duration_seconds = float(receipt.get("duration_seconds", max(0.0, t1 - t0)))
 
             cumulative_cost_usd += cost_usd

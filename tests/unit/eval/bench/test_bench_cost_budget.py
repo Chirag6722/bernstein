@@ -198,6 +198,29 @@ class TestPreExistingBundlesStillLoad:
 class TestBundleComparison:
     """Test comparing two bundles for score, pass-rate, and cost deltas."""
 
+    def test_compare_bundles_refuses_differing_harness_fingerprints(self) -> None:
+        """The public API enforces the same invariant the CLI checks."""
+        bundle_a = _make_sample_bundle(task_specs=[], scheduler_cfg={"scheduler": "a"})
+        bundle_b = _make_sample_bundle(task_specs=[], scheduler_cfg={"scheduler": "b"})
+        with pytest.raises(ValueError, match="differing harness fingerprints"):
+            compare_bundles(bundle_a, bundle_b)
+
+    def test_compare_bundles_counts_refusals_by_receipt_status(self) -> None:
+        """Refusal detection uses receipt.status, not harness_output.refusal."""
+        refused = TaskResult(
+            task_id="t1",
+            task_hash="h",
+            receipt={"status": "refused", "refusal_reason": "budget_exceeded"},
+            passed=False,
+            score=0.0,
+        )
+        bundle_a = _make_sample_bundle(task_specs=[])
+        bundle_a.task_results = (refused,)
+        bundle_b = _make_sample_bundle(task_specs=[])
+        cmp = compare_bundles(bundle_a, bundle_b)
+        assert cmp.refused_a == 1
+        assert cmp.refused_b == 0
+
     def test_compare_bundles_metrics(self) -> None:
         bundle_a = _make_sample_bundle(
             task_specs=[
@@ -334,6 +357,24 @@ class TestBundleComparison:
 
 class TestBudgetGate:
     """Test budget limit enforcement and refusal receipt emission."""
+
+    def test_negative_cost_receipts_are_clamped_to_zero(self) -> None:
+        """A hostile/buggy adapter cannot drive the cumulative budget negative."""
+
+        class NegativeCostAdapter(MockReplayAdapter):
+            def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
+                res = super().run_task(task, scheduler_config)
+                res["cost_usd"] = -5.0
+                return res
+
+        runner = BenchRunner(
+            suite=BenchSuite("s", [BenchTask(id="t1", description="desc", steps=(), assertions=())]),
+            adapter=NegativeCostAdapter(),
+            scheduler_config={"scheduler": "s"},
+        )
+        bundle = runner.run()
+        assert bundle.total_cost_usd == 0.0
+        assert bundle.task_results[0].cost_usd == 0.0
 
     def test_runner_budget_gate_stops_early(self) -> None:
         suite = BenchSuite(

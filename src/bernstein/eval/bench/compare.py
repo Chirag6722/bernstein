@@ -123,8 +123,30 @@ class CompareResult:
         return "\n".join(lines)
 
 
-def compare_bundles(bundle_a: SubmissionBundle, bundle_b: SubmissionBundle) -> CompareResult:
-    """Compare two submission bundles and return their delta metrics."""
+def compare_bundles(
+    bundle_a: SubmissionBundle,
+    bundle_b: SubmissionBundle,
+    *,
+    check_fingerprint: bool = True,
+) -> CompareResult:
+    """Compare two submission bundles and return their delta metrics.
+
+    Args:
+        check_fingerprint: When True (default), refuse to rank two bundles
+            whose harness fingerprints differ; a score gap across differing
+            harness settings is a harness change, not a model change. Callers
+            that have already checked (or explicitly allowed) the drift may
+            pass False.
+
+    Raises:
+        ValueError: when ``check_fingerprint`` is True and the two bundles
+            carry different harness fingerprints.
+    """
+    if check_fingerprint and bundle_a.harness_fingerprint != bundle_b.harness_fingerprint:
+        raise ValueError(
+            "Refusing to compare bundles with differing harness fingerprints: "
+            f"{bundle_a.harness_fingerprint[:12]}... vs {bundle_b.harness_fingerprint[:12]}..."
+        )
     pass_rate_a = bundle_a.pass_rate
     pass_rate_b = bundle_b.pass_rate
     pass_rate_delta = pass_rate_b - pass_rate_a
@@ -173,8 +195,8 @@ def compare_bundles(bundle_a: SubmissionBundle, bundle_b: SubmissionBundle) -> C
             )
         )
 
-    refused_a = sum(1 for r in bundle_a.task_results if r.harness_output.get("refusal") == "budget_exceeded")
-    refused_b = sum(1 for r in bundle_b.task_results if r.harness_output.get("refusal") == "budget_exceeded")
+    refused_a = sum(1 for r in bundle_a.task_results if r.receipt.get("status") == "refused")
+    refused_b = sum(1 for r in bundle_b.task_results if r.receipt.get("status") == "refused")
 
     return CompareResult(
         bundle_a_hash=bundle_a.bundle_hash(),
