@@ -764,4 +764,3 @@ def test_rederive_accepts_merge_commit_field(tmp_path: Path) -> None:
     events = load_events(journal.path).events
     assert len(events) == 2
     assert events[1]["merge_commit"] == "sha999"
-

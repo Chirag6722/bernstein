@@ -1471,4 +1471,3 @@ def test_skip_merge_records_nothing(tmp_path: Path) -> None:
     # Calling with recorder=None should not crash
     committed = _save_partial_work(spawner, session, recorder=None, reason="dead_agent")
     assert committed is True
-
