@@ -556,10 +556,13 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
 
 
 class ControlRegistry:
-        """Registry of standard and custom compliance controls.
-        ""ControlRegistry()"" starts from :data:;
-        ""ControlRegistry(controls=[...])"" starts from exactly those controls and nothing else, replacing the standard set entirely, which is what an isolated test registry wants.
-        """
+    """Registry of standard and custom compliance controls.
+
+    ``ControlRegistry()`` starts from :data:`STANDARD_CONTROLS`;
+    ``ControlRegistry(controls=[...])`` starts from exactly those controls
+    and nothing else, which is what an isolated test registry wants.
+    """
+
     def __init__(self, controls: Iterable[Control] | None = None) -> None:
         self._controls: dict[str, Control] = {}
         if controls is not None:
