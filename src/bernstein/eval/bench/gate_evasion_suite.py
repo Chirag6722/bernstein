@@ -65,6 +65,12 @@ GATE_RUNNER_GATES = frozenset(
         "dlp_scan",
         "mutation_testing",
         "dep_audit",
+        "test_expansion",
+        "agent_test_mutation",
+        "intent_verification",
+        "review_rubric",
+        "behavior_probe",
+        "integration_test_gen",
     }
 )
 
@@ -147,7 +153,13 @@ def load_evasion_corpus(
         List of :class:`GateEvasionCase` objects sorted by class name.
     """
     base_dir = Path(corpus_dir) if corpus_dir is not None else DEFAULT_EVASION_CORPUS_DIR
-    if not base_dir.exists() or not base_dir.is_dir():
+    if not base_dir.exists():
+        if corpus_dir is not None:
+            raise FileNotFoundError(f"Corpus directory not found: {base_dir}")
+        return []
+    if not base_dir.is_dir():
+        if corpus_dir is not None:
+            raise NotADirectoryError(f"Corpus path is not a directory: {base_dir}")
         return []
 
     cases: list[GateEvasionCase] = []
@@ -271,6 +283,7 @@ def _hermetic_config() -> Any:
 def _scrub(detail: str, scratch: Path) -> str:
     """Make gate output reproducible: no scratch path, no timings."""
     text = detail.replace(str(scratch), "<case>").replace(scratch.as_posix(), "<case>")
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
     text = re.sub(r"\b\d+(?:\.\d+)?s\b", "<t>", text)
     # pytest prints mock reprs with a per-process id and objects with an
     # address; neither is part of the verdict.
@@ -403,7 +416,9 @@ class GateEvasionScore:
             f"Gate Evasion Benchmark Score: {self.catch_rate * 100:.1f}% "
             f"({self.caught_cases}/{self.total_cases} caught)",
         ]
-        if self.missed_classes:
+        if self.total_cases == 0:
+            lines.append("No cases evaluated.")
+        elif self.missed_classes:
             lines.append("\nMissed Evasion Classes:")
             for mc in self.missed_classes:
                 lines.append(f"  - {mc}")
@@ -421,7 +436,7 @@ def score_gate_evasion(
     """Compute summary score and identify missed classes and responsible gates."""
     total = len(results)
     caught = sum(1 for r in results if r.caught)
-    catch_rate = (caught / total) if total > 0 else 1.0
+    catch_rate = (caught / total) if total > 0 else 0.0
 
     missed_classes: list[str] = []
     responsible_gates: dict[str, int] = {}
