@@ -259,9 +259,9 @@ class TestScorecardEvaluation:
         assert scorecard.conclusion == "neutral"
         assert "No verifier" in scorecard.summary
 
-    def test_an_install_identity_signature_is_reported_as_present_not_verified(self) -> None:
-        """Nothing in the bench layer can verify one yet (#5856); the scorecard
-        says so instead of implying it did."""
+    def test_an_install_identity_signature_is_neutral_not_verified(self) -> None:
+        """Nothing in the bench layer can verify one yet (#5856); a delta against
+        an unverifiable baseline must not read as success."""
         import dataclasses
 
         suite = build_golden_suite_v1()
@@ -271,8 +271,8 @@ class TestScorecardEvaluation:
         scorecard = evaluate_ci_scorecard(
             bundle=base, suite=suite, baseline_bundle=signed, verifier=BenchVerifier(suite=suite, adapter=adapter)
         )
-        assert scorecard.conclusion == "success"
-        assert "present but not verified" in scorecard.summary
+        assert scorecard.conclusion == "neutral"
+        assert "cannot be verified" in scorecard.summary
         assert "#5856" in scorecard.summary
 
 

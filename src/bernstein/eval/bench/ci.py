@@ -174,11 +174,14 @@ def evaluate_ci_scorecard(
     from bernstein.eval.bench.signer import StubSigner
 
     if baseline_bundle.signer_fingerprint != StubSigner.fingerprint():
-        # Present and shape-checked, not cryptographically verified: say so
-        # where the check-run reader will see it.
-        summary += (
-            f" Baseline signature by {baseline_bundle.signer_fingerprint} was present but not "
-            "verified: bench has no verifier for install-identity signatures yet (#5856)."
+        # A non-stub fingerprint is present but nothing in the bench layer can
+        # verify it yet (#5856). A delta measured against an unverifiable
+        # baseline must not read as success.
+        return _neutral(
+            bundle,
+            f"Baseline signature by {baseline_bundle.signer_fingerprint} is present but cannot "
+            "be verified by bench (#5856); result is neutral.",
+            baseline_bundle,
         )
 
     return BenchScorecard(
