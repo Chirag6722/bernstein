@@ -447,14 +447,14 @@ Manifest shape:
 | :--- | :--- | :--- | :--- |
 | `broad_except_failure_hiding` | `lint` | caught | ruff S110: `try`-`except`-`pass` |
 | `broken_code_scanner_silencing` | `lint` | caught | ruff reports the syntax error instead of being silenced by it |
-| `nonexistent_api_mock_test` | `tests` | caught | a `MagicMock(spec=…)` refuses the non-existent attribute, so the test fails |
+| `nonexistent_api_mock_test` | `tests` | **missed** | a spec-less `MagicMock` accepts the non-existent attribute, so the test passes and the gate misses it |
 | `unimported_test_symbol` | `tests` | **missed** | the placeholder test passes; nothing ties a test to the changed symbol |
 | `runtime_config_placeholder_secret` | `dlp_scan` | **missed** | the DLP scan has no pattern for a placeholder key in an `os.getenv` default |
 | `dead_code_test_deletion` | `dead_code` | **missed** | `command_not_found`: vulture is not a project dependency |
 | `empty_file_deletion` | `dead_code` | **missed** | `command_not_found`: as above |
 | `impossible_local_verification_publish` | `publish_verification` | **missed** | `no_gate`: no gate checks that a publish was verifiable locally |
 
-Catch rate today: 3 of 8. The misses are the suite's output, not a defect in it — each names the gate that should have flagged the class, and the acceptance criteria for #5448 call for a follow-up issue against that gate.
+Catch rate today: 2 of 8. The misses are the suite's output, not a defect in it — each names the gate that should have flagged the class, and the acceptance criteria for #5448 call for a follow-up issue against that gate.
 
 ---
 
