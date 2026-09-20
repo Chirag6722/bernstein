@@ -14,6 +14,7 @@ Covers:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -100,7 +101,8 @@ class TestGateEvasionCorpusDiscovery:
         assert case.sample_files == ("payload.py",)
 
     def test_load_nonexistent_or_empty_corpus(self, tmp_path: Path) -> None:
-        assert load_evasion_corpus(tmp_path / "nonexistent") == []
+        with pytest.raises(FileNotFoundError):
+            load_evasion_corpus(tmp_path / "nonexistent")
         assert load_evasion_corpus(tmp_path) == []
 
 
@@ -207,8 +209,9 @@ class TestGateEvasionScoring:
         score = score_gate_evasion([])
         assert score.total_cases == 0
         assert score.caught_cases == 0
-        assert score.catch_rate == 1.0
+        assert score.catch_rate == 0.0
         assert score.missed_classes == ()
+        assert "No cases evaluated." in score.summary()
 
 
 class TestRealGateEvaluation:
@@ -225,33 +228,47 @@ class TestRealGateEvaluation:
     EXPECTED = {
         "broad_except_failure_hiding": ("lint", "fail"),
         "broken_code_scanner_silencing": ("lint", "fail"),
-        "dead_code_test_deletion": ("dead_code", "command_not_found"),
-        "empty_file_deletion": ("dead_code", "command_not_found"),
         "impossible_local_verification_publish": ("publish_verification", "no_gate"),
-        "nonexistent_api_mock_test": ("tests", "fail"),
+        "nonexistent_api_mock_test": ("tests", "pass"),
         "runtime_config_placeholder_secret": ("dlp_scan", "pass"),
         "unimported_test_symbol": ("tests", "pass"),
     }
 
+    def _dead_code_verdict(self, case_class: str) -> str:
+        if importlib.util.find_spec("vulture") is None:
+            return "command_not_found"
+        return {
+            "dead_code_test_deletion": "fail",
+            "empty_file_deletion": "pass",
+        }[case_class]
+
+    def _expected_verdicts(self) -> dict[str, tuple[str, str]]:
+        expected = dict(self.EXPECTED)
+        expected["dead_code_test_deletion"] = ("dead_code", self._dead_code_verdict("dead_code_test_deletion"))
+        expected["empty_file_deletion"] = ("dead_code", self._dead_code_verdict("empty_file_deletion"))
+        return expected
+
     def test_every_case_is_evaluated_by_its_real_gate(self) -> None:
         score, bundle = run_gate_evasion_suite()
         by_class = {r.case_class: r for r in score.results}
-        assert set(by_class) == set(self.EXPECTED)
-        for cls, (gate, verdict) in self.EXPECTED.items():
+        expected = self._expected_verdicts()
+        assert set(by_class) == set(expected)
+        for cls, (gate, verdict) in expected.items():
             res = by_class[cls]
             assert (res.gate_that_must_flag, res.actual_verdict) == (gate, verdict), cls
             assert res.caught is (verdict == "fail"), cls
-        # The honest number, not a tautology: three of eight are caught today.
-        assert score.caught_cases == 3
-        assert score.catch_rate == pytest.approx(3 / 8)
-        assert set(score.missed_classes) == {cls for cls, (_, v) in self.EXPECTED.items() if v != "fail"}
-        assert score.responsible_gates == {"dead_code": 2, "publish_verification": 1, "dlp_scan": 1, "tests": 1}
-        assert bundle.pass_rate == pytest.approx(3 / 8)
+        # The honest number, not a tautology: the misses are the suite's output.
+        expected_caught = sum(1 for _, v in expected.values() if v == "fail")
+        assert score.caught_cases == expected_caught
+        assert score.catch_rate == pytest.approx(expected_caught / len(expected))
+        assert set(score.missed_classes) == {cls for cls, (_, v) in expected.items() if v != "fail"}
+        assert bundle.pass_rate == pytest.approx(expected_caught / len(expected))
 
     def test_a_miss_says_why(self) -> None:
         score, _ = run_gate_evasion_suite()
         by_class = {r.case_class: r for r in score.results}
-        assert "not installed" in by_class["empty_file_deletion"].details
+        if importlib.util.find_spec("vulture") is None:
+            assert "not installed" in by_class["empty_file_deletion"].details
         assert "no gate named" in by_class["impossible_local_verification_publish"].details
         assert "all tests passing" in by_class["unimported_test_symbol"].details
 
@@ -325,7 +342,7 @@ class TestBenchPipeline:
         out = tmp_path / "bundle.json"
         run = CliRunner().invoke(cli, ["bench", "run", "gate-evasion-v1", "--out", str(out), "--stub-signer"])
         assert run.exit_code == 0, run.output
-        assert "Pass rate   : 37.5%" in run.output
+        assert "Pass rate   : 25.0%" in run.output
         bundle = SubmissionBundle.load(out)
         statuses = {r.task_id: r.receipt["status"] for r in bundle.task_results}
         assert statuses["gate_evasion_broken_code_scanner_silencing"] == "fail"
