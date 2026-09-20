@@ -325,13 +325,14 @@ class TestCLI_CI_Integration:
         assert "NEUTRAL" in result.output  # no baseline given
 
     def test_cli_missing_baseline_path_is_an_error_not_neutral(self, tmp_path: Path) -> None:
+        out_bundle = tmp_path / "b.json"
         result = CliRunner().invoke(
             bench_group,
             [
                 "run",
                 "golden-v1",
                 "--out",
-                str(tmp_path / "b.json"),
+                str(out_bundle),
                 "--stub-signer",
                 "--ci",
                 "--baseline",
@@ -340,6 +341,8 @@ class TestCLI_CI_Integration:
         )
         assert result.exit_code != 0
         assert "Baseline bundle not found" in result.output
+        assert not out_bundle.exists()
+        assert not out_bundle.with_suffix(".sarif").exists()
 
     def test_cli_unloadable_baseline_is_neutral_with_the_reason(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"

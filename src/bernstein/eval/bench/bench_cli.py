@@ -198,6 +198,9 @@ def bench_run(
     from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter, ReplayAdapter
     from bernstein.eval.bench.signer import AgentCardSigner, StubSigner
 
+    if (ci or sarif_out) and baseline and not Path(baseline).is_file():
+        raise click.ClickException(f"Baseline bundle not found: {baseline}")
+
     suite_obj = _get_suite(suite)
     click.echo(f"Suite       : {suite_obj.version}")
     click.echo(f"Suite hash  : {suite_obj.suite_hash}")
@@ -256,8 +259,6 @@ def bench_run(
         baseline_problem: str | None = None
         if baseline:
             base_path = Path(baseline)
-            if not base_path.is_file():
-                raise click.ClickException(f"Baseline bundle not found: {base_path}")
             try:
                 baseline_bundle = SubmissionBundle.load(base_path)
             except Exception as exc:
