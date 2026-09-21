@@ -152,6 +152,20 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
 
     click.echo(f"\nScore       : {bundle.overall_score * 100:.1f}%")
     click.echo(f"Pass rate   : {bundle.pass_rate * 100:.1f}%")
+    if suite_obj.version == "leakage-v1":
+        # The pass rate alone cannot tell "scanned and dirty" from "never
+        # scanned", and both are inside it. Print what the run did not cover
+        # next to the number that would otherwise imply it did.
+        from bernstein.eval.bench.leakage_suite import score_from_bundle
+
+        leakage = score_from_bundle(bundle)
+        click.echo(f"Canaries    : {leakage.total_canaries_tested} across {leakage.total_scanned_surfaces} surface(s)")
+        if leakage.surfaces_not_exercised:
+            click.echo(f"Not scanned : {', '.join(leakage.surfaces_not_exercised)} (needs a governed run)")
+        if leakage.seed_points_not_exercised:
+            click.echo(f"Not seeded  : {', '.join(leakage.seed_points_not_exercised)} (needs a governed run)")
+        for collapsed in leakage.encodings_collapsed:
+            click.echo(f"Same bytes  : {collapsed}")
     click.echo(f"Bundle hash : {bundle.bundle_hash()}")
     click.echo(f"Signed by   : {bundle.signer_fingerprint or '(unsigned)'}")
     click.echo(f"\nBundle written to: {out_path}")
