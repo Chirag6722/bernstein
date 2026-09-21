@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from bernstein.cli.commands.compliance_cmd import compliance_group
 from bernstein.compliance.controls import (
+    Control,
     get_default_registry,
 )
 
@@ -189,3 +190,53 @@ class TestRegistryExtensionContract:
         assert "Total: 0 controls" in result.stdout
         assert "No control references framework 'iso_42O01'" in result.stderr
         assert "iso_42001" in result.stderr
+
+
+class TestRegisteredControlsCannotBeMutated:
+    """A registered control is process-wide shared state, so it must be read-only.
+
+    ``@dataclass(frozen=True)`` only stops the attributes being rebound; the
+    ``references`` mapping and ``evidence_kinds`` sequence it points at were
+    still mutable in place. Because ``ControlRegistry.get`` hands out the very
+    object held by ``DEFAULT_REGISTRY``, a caller could rewrite what an
+    external framework identifier means for every later reader in the process
+    -- a tampering surface in the catalogue whose entire purpose is to be the
+    authoritative statement of that meaning.
+    """
+
+    def test_references_cannot_be_rewritten_through_a_handed_out_control(self) -> None:
+        control = get_default_registry().get("CTL-GOV-01")
+        assert control is not None
+        with pytest.raises(TypeError):
+            control.references["eu_ai_act"] = "TAMPERED"  # type: ignore[index]
+
+    def test_evidence_kinds_cannot_be_appended_to(self) -> None:
+        control = get_default_registry().get("CTL-GOV-01")
+        assert control is not None
+        with pytest.raises(AttributeError):
+            control.evidence_kinds.append("forged")  # type: ignore[attr-defined]
+
+    def test_the_callers_own_containers_cannot_reach_in_afterwards(self) -> None:
+        """Defensive copy, not just an immutable view over the caller's object."""
+        references = {"eu_ai_act": "original"}
+        evidence = ["audit_chain"]
+        control = Control(
+            control_id="CTL-ORG-IMMUTABLE",
+            title="t",
+            description="d",
+            references=references,
+            evidence_kinds=evidence,
+        )
+
+        references["eu_ai_act"] = "mutated after construction"
+        evidence.append("added after construction")
+
+        assert control.references["eu_ai_act"] == "original"
+        assert tuple(control.evidence_kinds) == ("audit_chain",)
+
+    def test_to_dict_still_hands_back_plain_mutable_copies(self) -> None:
+        """Serialisation and existing consumers are unchanged by the hardening."""
+        payload = get_default_registry().get("CTL-GOV-01").to_dict()  # type: ignore[union-attr]
+        assert isinstance(payload["references"], dict)
+        assert isinstance(payload["evidence_kinds"], list)
+        payload["references"]["eu_ai_act"] = "safe to edit a copy"

@@ -19,22 +19,43 @@ name the registry does not know.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
 class Control:
-    """A compliance or security control with cross-framework mapping."""
+    """A compliance or security control with cross-framework mapping.
+
+    ``frozen=True`` stops the attributes being rebound; it does nothing about
+    mutating the containers they point at. A registered control is
+    process-wide shared state through :data:`DEFAULT_REGISTRY`, so
+    ``control.references["eu_ai_act"] = ...`` on a value handed out by
+    :meth:`ControlRegistry.get` would silently change the mapping every later
+    reader sees -- for a catalogue whose whole purpose is to be the
+    authoritative statement of what a control means, that is a tampering
+    surface rather than an inconvenience.
+
+    ``__post_init__`` therefore *copies* what it is given (so the caller's own
+    dict or list cannot reach in afterwards) and then exposes the copy
+    immutably: a ``MappingProxyType`` refuses item assignment, and a tuple has
+    no mutators. ``to_dict`` still hands back plain ``dict``/``list``, so
+    serialisation and every existing consumer are unchanged.
+    """
 
     control_id: str
     title: str
     description: str
-    references: dict[str, str] = field(default_factory=dict)
-    evidence_kinds: list[str] = field(default_factory=list)
+    references: Mapping[str, str] = field(default_factory=dict)
+    evidence_kinds: Sequence[str] = field(default_factory=tuple)
     category: str = "governance"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "references", MappingProxyType(dict(self.references)))
+        object.__setattr__(self, "evidence_kinds", tuple(self.evidence_kinds))
 
     def to_dict(self) -> dict[str, Any]:
         return {
