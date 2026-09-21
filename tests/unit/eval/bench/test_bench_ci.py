@@ -382,10 +382,32 @@ class TestCLI_CI_Integration:
 
         assert _suite_source_uri("golden-v1") == "src/bernstein/eval/bench/golden_suite.py"
         assert _suite_source_uri("tool-surface-v1") == "src/bernstein/eval/bench/tool_surface_suite.py"
+        assert _suite_source_uri("no-such-suite") is None
+
+    def test_a_custom_suite_inside_the_checkout_is_named_relative_to_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from bernstein.eval.bench import bench_cli
+
+        monkeypatch.setattr(bench_cli, "_REPO_ROOT", tmp_path.resolve())
+        suite_path = tmp_path / "bench" / "custom.json"
+        suite_path.parent.mkdir()
+        build_golden_suite_v1().save(suite_path)
+        assert bench_cli._suite_source_uri(str(suite_path)) == "bench/custom.json"
+
+    def test_a_custom_suite_outside_the_checkout_carries_no_location(self, tmp_path: Path) -> None:
+        """A runner-absolute path anchors nothing in the repository the report is read against.
+
+        SARIF locations are resolved against the repository a code-scanning
+        upload is attached to, so an absolute path from the build machine
+        points at nothing there -- and publishes that machine's layout into
+        the report. No location is the honest answer.
+        """
+        from bernstein.eval.bench.bench_cli import _suite_source_uri
+
         suite_path = tmp_path / "custom.json"
         build_golden_suite_v1().save(suite_path)
-        assert _suite_source_uri(str(suite_path)) == suite_path.as_posix()
-        assert _suite_source_uri("no-such-suite") is None
+        assert _suite_source_uri(str(suite_path)) is None
 
     def test_a_negative_regression_threshold_is_refused(self, tmp_path: Path) -> None:
         """A negative tolerance would make a perfect run conclude failure."""
@@ -435,3 +457,80 @@ class TestCLI_CI_Integration:
         )
         assert result.exit_code == 0, result.output
         assert "--repo and --head-sha are both needed" in result.stderr
+
+
+class TestTheOptionCombinationIsValidatedBeforeAnythingRuns:
+    """An option that is accepted and then does nothing is the failure the budget gate was told not to have."""
+
+    def test_reliability_refuses_the_ci_only_options(self, tmp_path: Path) -> None:
+        """`--reliability` returns before the CI block, so those flags were silently dropped.
+
+        The run exited 0 having written only the reliability receipt: no
+        SARIF, no scorecard, no check run, no CI conclusion.
+        """
+        for flag, value in (
+            ("--ci", None),
+            ("--sarif-out", str(tmp_path / "r.sarif")),
+            ("--baseline", str(tmp_path / "base.json")),
+            ("--repo", "owner/repo"),
+            ("--head-sha", "a" * 40),
+        ):
+            args = ["run", "golden-v1", "--out", str(tmp_path / "b.json"), "--stub-signer", "--reliability", "2", flag]
+            if value is not None:
+                args.append(value)
+            result = CliRunner().invoke(bench_group, args)
+            assert result.exit_code != 0, f"{flag}: {result.output}"
+            assert "cannot be combined with --reliability" in result.output, flag
+
+    def test_reliability_without_the_ci_options_still_runs(self, tmp_path: Path) -> None:
+        out = tmp_path / "receipt.json"
+        result = CliRunner().invoke(
+            bench_group, ["run", "golden-v1", "--out", str(out), "--stub-signer", "--reliability", "2"]
+        )
+        assert result.exit_code == 0, result.output
+        assert out.is_file()
+
+    def test_a_baseline_alone_is_evaluated_not_ignored(self, tmp_path: Path) -> None:
+        """`--baseline` without `--ci`/`--sarif-out` exited 0 having compared nothing.
+
+        A zero exit then reads as "no regression" when no regression check
+        ran at all.
+        """
+        base = tmp_path / "base.json"
+        first = CliRunner().invoke(bench_group, ["run", "golden-v1", "--out", str(base), "--stub-signer"])
+        assert first.exit_code == 0, first.output
+
+        result = CliRunner().invoke(
+            bench_group,
+            ["run", "golden-v1", "--out", str(tmp_path / "b.json"), "--stub-signer", "--baseline", str(base)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Bench Scorecard" in result.output or "Pass rate" in result.output
+        assert "Baseline" in result.output
+        # No SARIF was asked for, so none is written.
+        assert not (tmp_path / "b.sarif").exists()
+
+    def test_a_missing_baseline_is_a_configuration_error_even_without_ci(self, tmp_path: Path) -> None:
+        result = CliRunner().invoke(
+            bench_group,
+            [
+                "run",
+                "golden-v1",
+                "--out",
+                str(tmp_path / "b.json"),
+                "--stub-signer",
+                "--baseline",
+                str(tmp_path / "absent.json"),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "Baseline bundle not found" in result.output
+
+    def test_half_a_check_run_target_is_announced(self, tmp_path: Path) -> None:
+        """`--repo` without `--head-sha` used to skip silently."""
+        result = CliRunner().invoke(
+            bench_group,
+            ["run", "golden-v1", "--out", str(tmp_path / "b.json"), "--stub-signer", "--repo", "owner/repo"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "--repo and --head-sha are both needed" in result.output

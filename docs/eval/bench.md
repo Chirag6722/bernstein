@@ -211,6 +211,19 @@ so on stderr rather than leaving the operator to notice the missing check.
 check-run conclusion to keep the merge gate from reading it as green.
 `--regression-threshold` must be zero or positive.
 
+`--baseline`, `--repo` and `--head-sha` each ask for the comparison
+they feed, so any one of them runs the scorecard even without `--ci`.
+The SARIF report is written only for `--ci` or an explicit
+`--sarif-out`. The alternative — accepting a flag and producing
+nothing — let a zero exit read as "no regression" when nothing had
+been compared.
+
+A SARIF location is resolved against the repository the report is
+uploaded to, so a suite path outside this checkout carries **no**
+location rather than an absolute one: a runner-local path anchors
+nothing there, and publishing the build machine's layout into a
+code-scanning artefact is not a thing to do by accident.
+
 ---
 
 ## Reliability floor (`--reliability k`)
@@ -224,6 +237,11 @@ bernstein bench run golden-v1 --reliability 5 --out reliability.json
 bernstein bench reliability-verify reliability.json
 bernstein bench reliability-check reliability.json
 ```
+
+None of the CI options above are available here: `--ci`, `--sarif-out`,
+`--baseline`, `--repo` and `--head-sha` are all computed from a
+submission bundle, and this path emits a reliability receipt instead of
+one. Combining them is refused rather than silently ignored.
 
 This emits a signed reliability receipt reporting `pass@1` (any attempt
 passed) and `pass^k` (all `k` attempts passed, the headline floor), with
