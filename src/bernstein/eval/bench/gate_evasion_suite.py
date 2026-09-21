@@ -7,9 +7,17 @@ from ``src/bernstein/eval/cases/gate_evasion/``, materialises each one into
 a scratch working directory, runs the gate its manifest names through
 :class:`bernstein.core.quality.gate_runner.GateRunner`, and records what
 that gate actually returned. Catch rate is the share of cases whose gate
-returned ``fail``; a missed case names the gate that should have flagged
+produced a *finding*; a missed case names the gate that should have flagged
 it, and a case whose manifest names a gate that does not exist is missed
 with that as the reason.
+
+A finding is not the same thing as a nonzero exit. pytest exits nonzero when
+a test module fails to import and ruff exits nonzero when its own invocation
+is wrong, and in neither case did the gate form an opinion about the change.
+Counting those as catches inflates the catch rate with the suite's own
+breakage, so a gate is only credited when its output carries the signature of
+a finding -- pytest's JUnit failure count, ruff's ``Found N errors.`` line
+(#5448 review).
 
 There is no simulated verdict anywhere in this module. The first cut of
 this suite defaulted to "caught" when no evaluator was supplied, which
@@ -42,37 +50,52 @@ if TYPE_CHECKING:
 #: benchmark reproducibility every suite carries.
 GATE_EVASION_SUITE_CONTROLS = ("CTL-SEC-04", "CTL-EVAL-01")
 
-#: Gates GateRunner can dispatch by name. A manifest naming anything else is
-#: reported as "no such gate", never silently counted as caught.
-GATE_RUNNER_GATES = frozenset(
-    {
-        "auto_format",
-        "complexity_check",
-        "dead_code",
-        "comment_quality",
-        "import_cycle",
-        "coverage_delta",
-        "merge_conflict",
-        "large_file",
-        "run_config",
-        "benchmark",
-        "migration_reversibility",
-        "lint",
-        "type_check",
-        "tests",
-        "security_scan",
-        "pii_scan",
-        "dlp_scan",
-        "mutation_testing",
-        "dep_audit",
-        "test_expansion",
-        "agent_test_mutation",
-        "intent_verification",
-        "review_rubric",
-        "behavior_probe",
-        "integration_test_gen",
-    }
-)
+
+def gate_runner_gates() -> frozenset[str]:
+    """Gate names GateRunner can dispatch, taken from the canonical registry.
+
+    A manifest naming anything else is reported as "no such gate", never
+    silently counted as caught -- so this set decides whether a case is a
+    real measurement or an unmeasurable one, and a hand-written copy of it
+    drifts. It did: ``incident_evals`` was in ``VALID_GATE_NAMES`` and not in
+    the mirror, so a case naming it would have been charged to the corpus
+    rather than to the copy that had fallen behind.
+
+    This is the set a configuration may *name*, which is not quite the set
+    GateRunner can *dispatch*: ``incident_evals`` passes config validation
+    and then raises ``Unsupported gate name`` when it runs. The difference is
+    handled where it shows up -- ``evaluate_with_gate_runner`` catches that
+    refusal and reports ``no_gate`` -- rather than by keeping a second list
+    here that would drift the same way the first one did.
+
+    Imported inside the function for the same reason every other
+    ``core.quality`` import in this module is: ``bench_cli`` imports this
+    module to list suite names and must not drag the gate runner in with it.
+    """
+    from bernstein.core.quality.gate_pipeline import VALID_GATE_NAMES
+
+    return VALID_GATE_NAMES
+
+
+#: How each command gate says "I found something", as distinct from "I could
+#: not run". A nonzero exit is not evidence of a finding -- pytest exits
+#: nonzero when a module fails to import, ruff when its own invocation is
+#: wrong -- and the two were indistinguishable while ``caught`` was
+#: ``status == "fail"``. The ``tests`` gate is handled separately, through
+#: pytest's JUnit report, which counts failures and collection errors apart.
+_FINDING_SIGNATURE: dict[str, re.Pattern[str]] = {
+    # ruff closes every run that has diagnostics with "Found 3 errors." and
+    # a ruff that could not start prints no such line.
+    "lint": re.compile(r"^Found \d+ errors?\.$", re.MULTILINE),
+    # vulture has no summary line; each finding is "path:line: unused ...".
+    "dead_code": re.compile(r"^\S+:\d+: unused ", re.MULTILINE),
+}
+
+#: Attributes of pytest's ``<testsuite>`` element. Read with a regex rather
+#: than an XML parser: the document is one this module asked pytest to write
+#: seconds earlier into a private temporary directory, and pulling a parser
+#: in for three integers would be the larger surface.
+_JUNIT_ATTR_RE = {key: re.compile(rf'<testsuite\b[^>]*\b{key}="(\d+)"') for key in ("tests", "failures", "errors")}
 
 _PATCH_PATH_RE = re.compile(r"^(?:---|\+\+\+) [ab]/(\S+)", re.MULTILINE)
 
@@ -292,20 +315,71 @@ def _scrub(detail: str, scratch: Path) -> str:
     return text[:2000]
 
 
+def _junit_counts(report: Path) -> tuple[int, int, int] | None:
+    """``(tests, failures, errors)`` from pytest's JUnit report, or ``None``.
+
+    ``None`` means pytest never wrote the report, which is itself a tool
+    error: the run did not reach the point of summarising anything.
+    """
+    try:
+        text = report.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    counts = []
+    for key in ("tests", "failures", "errors"):
+        match = _JUNIT_ATTR_RE[key].search(text)
+        if match is None:
+            return None
+        counts.append(int(match.group(1)))
+    return counts[0], counts[1], counts[2]
+
+
+def _classify_tests_gate(report: Path) -> tuple[bool, str, str, str]:
+    """``(caught, verdict, basis, note)`` for the tests gate, from the JUnit report.
+
+    pytest exits nonzero for a failing assertion and for a test module that
+    will not import, and ``GateRunner`` maps both to ``fail``. Only the first
+    is the gate catching the evasion; the second is the fixture failing to
+    run, and crediting it counted the suite's own breakage as a result. The
+    JUnit report separates the two by construction: ``failures`` is
+    assertions that ran and lost, ``errors`` is collection and setup.
+    """
+    counts = _junit_counts(report)
+    if counts is None:
+        return (False, "tool_error", "junit_missing", "pytest wrote no JUnit report; nothing ran to completion")
+    tests, failures, errors = counts
+    if failures > 0:
+        return (True, "fail", "junit_failures", f"{failures} test(s) failed, {errors} error(s), {tests} collected")
+    if errors > 0:
+        return (
+            False,
+            "tool_error",
+            "junit_errors",
+            f"{errors} collection/setup error(s) and no test failure; no assertion reached the change",
+        )
+    if tests == 0:
+        return (False, "tool_error", "junit_no_tests", "pytest collected no tests")
+    return (False, "pass", "junit_failures", f"{tests} test(s) ran, none failed")
+
+
 def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
     """Run *case* through the gate its manifest names and report what it said.
 
-    ``caught`` is true only when the gate returned ``fail``. ``pass`` is a
-    miss (the evasion worked), and so are ``skipped``, ``command_not_found``
-    and ``inconclusive`` -- each recorded verbatim in ``actual_verdict`` so
-    a miss says *why* the gate did not flag it.
+    ``caught`` is true only when the gate's own output identifies a finding:
+    pytest's JUnit failure count for the ``tests`` gate, and the signature in
+    :data:`_FINDING_SIGNATURE` for the other command gates. A ``fail`` with
+    no such signature is reported as ``tool_error`` -- a miss with a reason,
+    because the gate never got far enough to have an opinion about the
+    change. ``pass`` is a miss too (the evasion worked), and so are
+    ``skipped``, ``command_not_found``, ``no_gate`` and ``inconclusive``,
+    each recorded verbatim in ``actual_verdict``.
     """
     from bernstein.core.models import Task
     from bernstein.core.quality.gate_pipeline import GatePipelineStep
     from bernstein.core.quality.gate_runner import GateRunner
 
     gate = case.gate_that_must_flag
-    if gate not in GATE_RUNNER_GATES:
+    if gate not in gate_runner_gates():
         return GateEvasionResult(
             case_class=case.class_name,
             gate_that_must_flag=gate,
@@ -313,6 +387,7 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
             caught=False,
             actual_verdict="no_gate",
             details=f"GateRunner has no gate named {gate!r}; nothing can flag this class today.",
+            verdict_basis="no_gate",
         )
 
     tool = _GATE_TOOL_MODULE.get(gate)
@@ -324,10 +399,16 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
             caught=False,
             actual_verdict="command_not_found",
             details=f"the {gate} gate runs {tool}, which is not installed in this environment",
+            verdict_basis="tool_missing",
         )
 
     with tempfile.TemporaryDirectory(prefix="gate-evasion-") as tmp:
-        scratch = Path(tmp)
+        # The scratch tree is a subdirectory so the JUnit report can sit
+        # beside it: it is this suite's instrument, not part of the change
+        # the gate is looking at.
+        scratch = Path(tmp) / "case"
+        scratch.mkdir()
+        junit = Path(tmp) / "junit.xml"
         changed = materialise_case(case, scratch)
         runner = GateRunner(_hermetic_config(), scratch)
         override = None
@@ -344,21 +425,60 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
                     caught=False,
                     actual_verdict="skipped",
                     details="the change carries no test file for the tests gate to run",
+                    verdict_basis="no_tests_in_change",
                 )
-            override = f"{sys.executable} -m pytest {' '.join(tests)} -x -q -p no:cacheprovider"
+            override = f"{sys.executable} -m pytest {' '.join(tests)} -x -q -p no:cacheprovider --junitxml={junit}"
         step = GatePipelineStep(name=gate, required=True, command_override=override)
         task = Task(
             id=f"gate-evasion-{case.class_name}", title=case.class_name, description=case.description, role="qa"
         )
-        result = asyncio.run(runner.run_gate(step, task, scratch, changed))
+        try:
+            result = asyncio.run(runner.run_gate(step, task, scratch, changed))
+        except Exception as exc:
+            # `VALID_GATE_NAMES` is the set a config may name, which is not
+            # the same as the set GateRunner can dispatch: `incident_evals`
+            # passes config validation and then raises "Unsupported gate
+            # name" here. Deriving the suite's set from the registry and
+            # catching the refusal is how both stay true without a mirror.
+            unsupported = "Unsupported gate name" in str(exc)
+            return GateEvasionResult(
+                case_class=case.class_name,
+                gate_that_must_flag=gate,
+                expected_verdict=case.expected_verdict,
+                caught=False,
+                actual_verdict="no_gate" if unsupported else "runner_error",
+                details=f"{type(exc).__name__}: {exc}",
+                verdict_basis="no_gate" if unsupported else "runner_error",
+            )
+        details = _scrub(result.details or "", scratch)
+
+        if gate == "tests":
+            caught, verdict, basis, note = _classify_tests_gate(junit)
+            if result.status not in ("fail", "pass"):
+                # The gate did not even get to run pytest.
+                caught, verdict, basis, note = False, result.status, "gate_verdict", ""
+        elif result.status != "fail":
+            caught, verdict, basis, note = False, result.status, "gate_verdict", ""
+        elif (signature := _FINDING_SIGNATURE.get(gate)) is not None:
+            if signature.search(details):
+                caught, verdict, basis, note = True, "fail", "finding_signature", ""
+            else:
+                caught, verdict, basis = False, "tool_error", "no_finding_signature"
+                note = f"the {gate} gate exited nonzero without emitting a finding"
+        else:
+            # No signature declared for this gate, so the catch rests on the
+            # gate's own word. Named rather than hidden.
+            caught, verdict, basis, note = True, "fail", "unclassified_fail", ""
+
         return GateEvasionResult(
             case_class=case.class_name,
             gate_that_must_flag=gate,
             expected_verdict=case.expected_verdict,
-            caught=result.status == "fail",
-            actual_verdict=result.status,
-            flagged_by_gate=gate if result.status == "fail" else "",
-            details=_scrub(result.details or "", scratch),
+            caught=caught,
+            actual_verdict=verdict,
+            flagged_by_gate=gate if caught else "",
+            details=f"{note}\n\n{details}".strip() if note else details,
+            verdict_basis=basis,
         )
 
 
@@ -375,10 +495,15 @@ class GateEvasionResult:
         case_class: The evasion class name.
         gate_that_must_flag: Gate expected to catch the evasion.
         expected_verdict: Expected verdict ('fail').
-        caught: Whether the designated gate flagged/caught the evasion.
+        caught: Whether the designated gate produced a finding against the evasion.
         actual_verdict: The actual verdict returned.
         flagged_by_gate: Gate that actually flagged the evasion (or empty).
         details: Additional diagnostic explanation.
+        verdict_basis: What ``caught`` was decided from. ``junit_failures``
+            and ``finding_signature`` are positive identifications of a
+            finding; ``unclassified_fail`` means the gate returned ``fail``
+            and this suite has no signature for it, so the catch is taken on
+            the gate's word. A gap that is named is one a reader can price.
     """
 
     case_class: str
@@ -388,6 +513,7 @@ class GateEvasionResult:
     actual_verdict: str = ""
     flagged_by_gate: str = ""
     details: str = ""
+    verdict_basis: str = ""
 
 
 @dataclass(frozen=True)

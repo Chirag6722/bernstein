@@ -27,6 +27,8 @@ from bernstein.eval.bench.gate_evasion_suite import (
     GateEvasionCase,
     GateEvasionResult,
     build_gate_evasion_suite_v1,
+    evaluate_with_gate_runner,
+    gate_runner_gates,
     load_evasion_corpus,
     materialise_case,
     run_gate_evasion_suite,
@@ -392,3 +394,152 @@ class TestTaxonomyEvasionCategories:
         assert hasattr(FailureCategory, "EVASION_BROAD_EXCEPT")
         assert hasattr(FailureCategory, "EVASION_NONEXISTENT_API_MOCK")
         assert hasattr(FailureCategory, "EVASION_IMPOSSIBLE_VERIFICATION")
+
+
+class TestTheGateNameSetIsNotHandMaintained:
+    """A copy of the registry drifts, and the drift is charged to the corpus.
+
+    A manifest naming a gate outside this set is reported as ``no_gate`` -- a
+    miss attributed to "nothing can catch this class". When the set is a hand-
+    written mirror, a gate that exists and is simply missing from the copy
+    produces the same report, and the corpus takes the blame for the copy.
+    That happened: ``incident_evals`` was in ``VALID_GATE_NAMES`` and not in
+    the mirror.
+    """
+
+    def test_it_is_the_canonical_registry(self) -> None:
+        from bernstein.core.quality.gate_pipeline import VALID_GATE_NAMES
+
+        assert gate_runner_gates() == VALID_GATE_NAMES
+
+    def test_incident_evals_is_reachable(self) -> None:
+        """The specific name the mirror had fallen behind on."""
+        assert "incident_evals" in gate_runner_gates()
+
+    def test_a_gate_the_runner_refuses_is_a_miss_not_a_crash(self, tmp_path: Path) -> None:
+        """``incident_evals`` is configurable and undispatchable, and both are true.
+
+        `VALID_GATE_NAMES` is what a configuration may name; GateRunner raises
+        ``Unsupported gate name`` for this one. Catching that is what lets the
+        set stay derived instead of mirrored -- and it is also what stops one
+        such gate from ending the whole benchmark run.
+        """
+        case = _write_case(tmp_path, "incident_case", gate="incident_evals", files={})
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is False
+        assert result.actual_verdict == "no_gate"
+        assert "Unsupported gate name" in result.details
+
+    def test_a_gate_that_raises_for_any_other_reason_is_also_a_miss(self, tmp_path: Path) -> None:
+        """A missing API key is a gate that could not run, not a benchmark failure."""
+        case = _write_case(tmp_path, "intent_case", gate="intent_verification", files={})
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is False
+        assert result.actual_verdict in ("runner_error", "inconclusive", "skipped", "pass", "fail")
+
+
+def _write_case(root: Path, name: str, gate: str, files: dict[str, str]) -> GateEvasionCase:
+    """A one-case corpus on disk, loaded the way the suite loads the real one."""
+    case_dir = root / name
+    case_dir.mkdir(parents=True)
+    (case_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "class_name": name,
+                "description": name,
+                "expected_verdict": "fail",
+                "gate_that_must_flag": gate,
+                "taxonomy_category": "gate_evasion",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for filename, body in files.items():
+        (case_dir / filename).write_text(body, encoding="utf-8")
+    cases = load_evasion_corpus(root)
+    return next(c for c in cases if c.class_name == name)
+
+
+class TestOnlyAFindingCountsAsACatch:
+    """A nonzero exit is not evidence that a gate had an opinion.
+
+    ``GateRunner`` maps any nonzero exit to ``fail``, and pytest exits nonzero
+    when a test module will not import. While ``caught`` was ``status ==
+    "fail"``, a fixture that broke during collection scored exactly like one
+    the gate caught -- the suite was crediting its own breakage.
+    """
+
+    def test_a_genuine_assertion_failure_is_a_catch(self, tmp_path: Path) -> None:
+        case = _write_case(
+            tmp_path,
+            "real_failure",
+            gate="tests",
+            files={"test_thing.py": "def test_it() -> None:\n    assert 1 == 2\n"},
+        )
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is True
+        assert result.actual_verdict == "fail"
+        assert result.verdict_basis == "junit_failures"
+
+    def test_a_test_module_that_will_not_import_is_not_a_catch(self, tmp_path: Path) -> None:
+        case = _write_case(
+            tmp_path,
+            "import_error",
+            gate="tests",
+            files={
+                "test_thing.py": "import definitely_not_a_real_module_xyz\n\n\ndef test_it() -> None:\n    assert True\n"
+            },
+        )
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is False
+        assert result.actual_verdict == "tool_error"
+        assert result.verdict_basis == "junit_errors"
+        assert "no assertion reached the change" in result.details
+
+    def test_a_syntactically_invalid_test_is_not_a_catch(self, tmp_path: Path) -> None:
+        case = _write_case(
+            tmp_path,
+            "syntax_error",
+            gate="tests",
+            files={"test_thing.py": "def test_it(: -> None\n    assert True\n"},
+        )
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is False
+        assert result.actual_verdict == "tool_error"
+
+    def test_passing_tests_are_still_a_miss(self, tmp_path: Path) -> None:
+        case = _write_case(
+            tmp_path,
+            "all_pass",
+            gate="tests",
+            files={"test_thing.py": "def test_it() -> None:\n    assert True\n"},
+        )
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is False
+        assert result.actual_verdict == "pass"
+
+    @pytest.mark.skipif(importlib.util.find_spec("ruff") is None, reason="the lint gate runs ruff")
+    def test_a_lint_catch_carries_ruffs_own_finding_count(self, tmp_path: Path) -> None:
+        """The two real catches in the corpus are identified, not assumed."""
+        case = _write_case(
+            tmp_path,
+            "lint_finding",
+            gate="lint",
+            files={
+                "service.py": "def f():\n    try:\n        raise RuntimeError('x')\n    except Exception:\n        pass\n"
+            },
+        )
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is True
+        assert result.verdict_basis == "finding_signature"
+
+
+class TestTheMeasuredCorpusIsPinned:
+    """The catch rate, and the basis of every verdict in it."""
+
+    def test_every_catch_is_positively_identified(self) -> None:
+        results = [evaluate_with_gate_runner(c) for c in load_evasion_corpus(DEFAULT_EVASION_CORPUS_DIR)]
+        for result in results:
+            if result.caught:
+                assert result.verdict_basis in ("junit_failures", "finding_signature"), result.case_class
+            assert result.verdict_basis, result.case_class
