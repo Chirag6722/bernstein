@@ -68,9 +68,12 @@ adapters, the web dashboard, the terminal UI, docs, and packaging.
 Stewardship starts at triage rather than write, because write access
 on this repository reaches the release workflows and their publishing
 credentials, and that surface is kept least-privilege. After a
-stretch of established stewardship the write grant follows, and with
-it your entry in [CODEOWNERS](.github/CODEOWNERS) - GitHub only
-honors code owners who hold write.
+stretch of established stewardship the maintainer can confirm you as a
+committer, which is the write grant, and on a record of reviews that
+found real problems as a core reviewer for the area, which is what an
+entry in [CODEOWNERS](.github/CODEOWNERS) means - GitHub only honors
+code owners who hold write. Both roles, and the floor for each, are
+defined in the [review charter](docs/governance/review-charter.md#7-becoming-and-remaining-a-committer).
 
 This is not ceremonial. An area with a name against it gets a second
 reader who knows it; an area with nobody against it accumulates
@@ -112,7 +115,14 @@ All three must pass before committing. No exceptions, no "fix later."
 4. Commit with a clear message
 5. Open a PR against `main`
 
-All non-trivial changes land via PR with at least one approving review. Security-touching changes need two approvals or operator-only push. Full process and reviewer expectations: [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md).
+Every change lands through the merge queue with the approvals the
+[review charter](docs/governance/review-charter.md) requires: two, from
+committers who are not the author, at least one of them a core reviewer
+(the roster is `.github/quorum-roster.toml`). Ownership is separate: any
+path with a named owner in [CODEOWNERS](.github/CODEOWNERS) needs that
+owner's approval as well, rather than the core approval standing in for
+it. Protected paths also need the maintainer. Reviewer checklist:
+[docs/CODE_REVIEW.md](docs/CODE_REVIEW.md).
 
 ### If you cannot open a pull request
 
@@ -229,6 +239,36 @@ Run locally before committing:
 ```bash
 uv run python scripts/check_routes_broad_except.py
 ```
+
+### Production reachability (security and identity controls)
+
+`src/bernstein/core/security/**.py` and `src/bernstein/core/identity/**.py`
+are policed by a CI lint (`scripts/check_unreachable_controls.py`) that fails
+the build when a public symbol has no caller inside the shipped package. A
+control whose only importers are its own tests, an `__init__` re-export, or
+the lazy module map in `src/bernstein/core/__init__.py` passes every other
+check while never running.
+
+Only `Name` loads and attribute accesses count as callers. Imports and string
+literals do not, which is what makes a re-export and the lazy module map
+invisible to the check. Reachability is a fixpoint, so a symbol called only by
+another unreached symbol is still unreached.
+
+Known cases live in `unreachable_controls_allowlist.txt`, one line per symbol
+with a mandatory written reason. Removing an entry is the goal: an entry whose
+symbol becomes reachable fails the gate, so the list cannot rot.
+
+Run locally before committing:
+
+```bash
+uv run python scripts/check_unreachable_controls.py
+# after adding or deleting a symbol, refresh the entry list (reasons survive):
+uv run python scripts/check_unreachable_controls.py --update
+```
+
+Replace every `REASON REQUIRED` marker `--update` writes before committing --
+the gate rejects it.
+
 
 See [AGENTS.md](AGENTS.md) for the full doctrine, including change classification, conflict protocol, and zero-tolerance failures.
 
