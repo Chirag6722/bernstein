@@ -19,7 +19,7 @@ Community Specification License v1.0.
 Note for readers of ``docs/compliance/finos-aigf-mapping.md``: that document
 predates this module and still uses a ``CTRL-*`` / ``AIR-*`` vocabulary from
 the framework's earlier "AI Readiness" naming. Reconciling it is tracked
-separately; this module is the vocabulary the code cites.
+in #6148; this module is the vocabulary the code cites.
 """
 
 from __future__ import annotations
