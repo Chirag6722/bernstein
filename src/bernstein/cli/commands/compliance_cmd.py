@@ -965,7 +965,7 @@ def controls_command(framework: str | None, output_format: str) -> None:
         return
 
     if output_format == "markdown":
-        click.echo(registry.to_markdown_table())
+        click.echo(registry.to_markdown_table(framework=framework))
         return
 
     # Text table format

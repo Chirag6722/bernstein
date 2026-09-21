@@ -22,6 +22,10 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from bernstein.compliance.finos_aigf import reference_label as _finos_ref
+from bernstein.compliance.owasp_asi import reference_label as _asi_ref
+from bernstein.compliance.owasp_skills import reference_label as _ast_ref
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
@@ -68,9 +72,37 @@ class Control:
         }
 
 
+#: Framework keys a control may be cross-referenced against.
+#:
+#: ``register()`` refuses anything else. A control defined against
+#: ``"iso_42O01"`` (capital O) would otherwise register cleanly and then be
+#: invisible to ``list_controls(framework="iso_42001")`` and to the
+#: ``--framework`` flag: the reference is silently dropped rather than
+#: reported. The CLI already guards the query side against exactly that
+#: typo, and a definition-side typo is the half that cannot be noticed.
+KNOWN_FRAMEWORKS: frozenset[str] = frozenset(
+    {"eu_ai_act", "owasp_asi", "owasp_skills", "nist_ai_rmf", "iso_42001", "finos_aigf"}
+)
+
+
 # ---------------------------------------------------------------------------
 # Standard Control Definitions (>= 30 pre-populated controls)
 # ---------------------------------------------------------------------------
+#
+# The ``owasp_asi``, ``owasp_skills`` and ``finos_aigf`` values below are not
+# written by hand. Each is built by the helper that owns that framework's
+# catalogue -- ``owasp_asi.reference_label``, ``owasp_skills.reference_label``,
+# ``finos_aigf.reference_label`` -- so this file cites an external control id
+# but never states what that id means. A label typed here could disagree with
+# the map that drives the evidence pack, and did: ``ASI08`` was labelled
+# "Human-in-the-Loop Bypass" while ``owasp_asi.py`` defines it as unbounded
+# consumption. Citing an id the helper does not know now fails at import.
+#
+# Where a Bernstein control has no counterpart in a framework's published
+# catalogue, it carries no key for that framework. That is deliberate: the
+# OWASP ASI list has no sensitive-data-exposure entry and the FINOS AIGF
+# mitigation list has no pre-execution human-approval entry, so a reference
+# to one would be a claim an auditor could not resolve.
 
 STANDARD_CONTROLS: tuple[Control, ...] = (
     Control(
@@ -81,7 +113,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 13(1) - Transparency and provision of instructions",
             "nist_ai_rmf": "GOVERN-1.1",
             "iso_42001": "A.5.2 AI Policy",
-            "finos_aigf": "AIGF-GOV-01 Organizational Governance",
+            "finos_aigf": _finos_ref("mi-18"),
         },
         evidence_kinds=["audit_chain", "policy", "lineage_log"],
         category="governance",
@@ -97,7 +129,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 13(2) - Technical capabilities and characteristics declaration",
             "nist_ai_rmf": "MAP-1.1",
             "iso_42001": "A.6.2 AI System Assessment",
-            "finos_aigf": "AIGF-GOV-02 Model Identity & Registry",
         },
         evidence_kinds=["agent_card", "lineage_log"],
         category="governance",
@@ -111,9 +142,10 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 12(1) - Automatic recording of events (logging)",
+            "owasp_asi": _asi_ref("ASI09"),
             "nist_ai_rmf": "GOVERN-4.1",
             "iso_42001": "A.8.4 Logging and Monitoring",
-            "finos_aigf": "AIGF-AUD-01 Immutable Audit Logging",
+            "finos_aigf": _finos_ref("mi-21"),
         },
         evidence_kinds=["audit_chain"],
         category="audit",
@@ -129,7 +161,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 12(3) - Logging retention over high-risk AI system lifetime",
             "nist_ai_rmf": "MANAGE-1.3",
             "iso_42001": "A.8.4 Logging and Monitoring",
-            "finos_aigf": "AIGF-AUD-02 Log Retention & Continuity",
+            "finos_aigf": _finos_ref("mi-4"),
         },
         evidence_kinds=["audit_chain", "retention_evidence"],
         category="audit",
@@ -143,9 +175,9 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 11 & Annex IV - Technical documentation & traceability",
+            "owasp_asi": _asi_ref("ASI06"),
             "nist_ai_rmf": "MAP-1.5",
             "iso_42001": "A.7.2 AI Data Lifecycle",
-            "finos_aigf": "AIGF-DAT-01 Artifact Provenance",
         },
         evidence_kinds=["lineage_log", "signatures"],
         category="lineage",
@@ -161,7 +193,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 14 - Human oversight of high-risk AI systems",
             "nist_ai_rmf": "GOVERN-3.2",
             "iso_42001": "A.9.2 Human Oversight",
-            "finos_aigf": "AIGF-HUM-01 Human-in-the-Loop Controls",
         },
         evidence_kinds=["approval_receipt", "audit_chain"],
         category="oversight",
@@ -175,10 +206,8 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 14(4) - Verification of system intervention and execution",
-            "owasp_asi": "ASI08 - Human-in-the-Loop Bypass / Failure",
             "nist_ai_rmf": "MEASURE-2.5",
             "iso_42001": "A.9.2 Human Oversight",
-            "finos_aigf": "AIGF-HUM-02 Action Intent Binding",
         },
         evidence_kinds=["approval_receipt", "oversight_evidence"],
         category="oversight",
@@ -192,10 +221,10 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 15(1) - Cybersecurity & adversarial robustness",
-            "owasp_asi": "ASI01 - Agent Goal / Instruction Hijack",
+            "owasp_asi": _asi_ref("ASI01"),
             "nist_ai_rmf": "MANAGE-2.4",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SEC-01 Prompt Injection Defense",
+            "finos_aigf": _finos_ref("mi-17"),
         },
         evidence_kinds=["bench_bundle", "audit_chain"],
         category="security",
@@ -208,10 +237,10 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 15(1) - Cybersecurity & technical robustness",
-            "owasp_asi": "ASI02 - Excessive Agency & Privilege Escalation",
+            "owasp_asi": _asi_ref("ASI05"),
             "nist_ai_rmf": "MANAGE-1.3",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SEC-02 Tool Sandboxing & Least Privilege",
+            "finos_aigf": _finos_ref("mi-19"),
         },
         evidence_kinds=["audit_chain", "bench_bundle"],
         category="security",
@@ -225,10 +254,9 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 10(5) - Data governance and confidentiality",
-            "owasp_asi": "ASI06 - Sensitive Data Exposure",
             "nist_ai_rmf": "MANAGE-2.2",
             "iso_42001": "A.7.2 AI Data Lifecycle",
-            "finos_aigf": "AIGF-SEC-03 Secret & Data Leakage Prevention",
+            "finos_aigf": _finos_ref("mi-1"),
         },
         evidence_kinds=["bench_bundle", "audit_chain"],
         category="security",
@@ -242,10 +270,9 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 15(1) - Adversarial robustness & resilience",
-            "owasp_asi": "ASI05 - Untrusted Environment Exploitation",
             "nist_ai_rmf": "MEASURE-2.11",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SEC-04 Evasion Resistance",
+            "finos_aigf": _finos_ref("mi-5"),
         },
         evidence_kinds=["bench_bundle"],
         category="security",
@@ -256,10 +283,10 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         description="Deterministic pre-flight checks recorded at the outbound model-call boundary before token egress.",
         references={
             "eu_ai_act": "Article 15(1) - Technical robustness and egress safety",
-            "owasp_asi": "ASI04 - Insecure Inter-Agent / External Communication",
+            "owasp_asi": _asi_ref("ASI02"),
             "nist_ai_rmf": "MANAGE-2.4",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SEC-05 Model Call Boundary Enforcement",
+            "finos_aigf": _finos_ref("mi-3"),
         },
         evidence_kinds=["audit_chain", "check_record"],
         category="security",
@@ -275,7 +302,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(1) - Technical accuracy and repeatability",
             "nist_ai_rmf": "MEASURE-2.1",
             "iso_42001": "A.6.2 AI System Assessment",
-            "finos_aigf": "AIGF-ROB-01 Deterministic Execution & Replay",
         },
         evidence_kinds=["bench_bundle", "verifier_receipt"],
         category="robustness",
@@ -291,7 +317,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(2) - Post-market monitoring & performance consistency",
             "nist_ai_rmf": "MEASURE-2.6",
             "iso_42001": "A.10.1 Monitoring and Evaluation",
-            "finos_aigf": "AIGF-ROB-02 Drift Detection & Performance Monitoring",
         },
         evidence_kinds=["bench_bundle", "drift_report"],
         category="robustness",
@@ -307,7 +332,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(1) - Error resilience and fail-safe operation",
             "nist_ai_rmf": "MANAGE-1.2",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-ROB-03 Fault Tolerance & Recovery",
         },
         evidence_kinds=["audit_chain", "bench_bundle"],
         category="robustness",
@@ -323,7 +347,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 10 - Data and data governance",
             "nist_ai_rmf": "MAP-2.1",
             "iso_42001": "A.7.2 AI Data Lifecycle",
-            "finos_aigf": "AIGF-DAT-02 Data Governance & Quality",
+            "finos_aigf": _finos_ref("mi-6"),
         },
         evidence_kinds=["lineage_log", "dataset_manifest"],
         category="data",
@@ -336,10 +360,9 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         ),
         references={
             "eu_ai_act": "Article 10(5) - Privacy and personal data protection",
-            "owasp_asi": "ASI06 - Sensitive Data Exposure",
             "nist_ai_rmf": "GOVERN-1.2",
             "iso_42001": "A.7.2 AI Data Lifecycle",
-            "finos_aigf": "AIGF-DAT-03 PII & Confidentiality Controls",
+            "finos_aigf": _finos_ref("mi-1"),
         },
         evidence_kinds=["audit_chain", "redaction_log"],
         category="data",
@@ -355,7 +378,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 73 - Reporting of serious incidents",
             "nist_ai_rmf": "MANAGE-4.1",
             "iso_42001": "A.8.4 Incident Management",
-            "finos_aigf": "AIGF-INC-01 Serious Incident Management",
+            "finos_aigf": _finos_ref("mi-4"),
         },
         evidence_kinds=["incident_pack", "audit_chain"],
         category="incident",
@@ -366,9 +389,10 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         description="Enforcement of per-verdict cost tracking, spawn-time token budgets, and CI cost ceiling gates.",
         references={
             "eu_ai_act": "Article 13(1) - Resource utilization transparency",
+            "owasp_asi": _asi_ref("ASI08"),
             "nist_ai_rmf": "MANAGE-1.3",
             "iso_42001": "A.5.2 Resource Management",
-            "finos_aigf": "AIGF-FIN-01 Financial & Token Budget Controls",
+            "finos_aigf": _finos_ref("mi-9"),
         },
         evidence_kinds=["bench_bundle", "cost_ledger"],
         category="cost",
@@ -384,7 +408,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(1) - Verification and testing standards",
             "nist_ai_rmf": "MEASURE-2.1",
             "iso_42001": "A.6.2 AI System Assessment",
-            "finos_aigf": "AIGF-EVL-01 Benchmark Reproducibility",
+            "finos_aigf": _finos_ref("mi-5"),
         },
         evidence_kinds=["bench_bundle", "suite_hash"],
         category="evaluation",
@@ -400,7 +424,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(1) - Accuracy and consistency assessment",
             "nist_ai_rmf": "MEASURE-2.2",
             "iso_42001": "A.6.2 AI System Assessment",
-            "finos_aigf": "AIGF-EVL-02 Determinism Scoring",
+            "finos_aigf": _finos_ref("mi-5"),
         },
         evidence_kinds=["bench_bundle", "reliability_report"],
         category="evaluation",
@@ -416,7 +440,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 14 - Automated and human quality adjudication",
             "nist_ai_rmf": "MEASURE-1.1",
             "iso_42001": "A.6.2 AI System Assessment",
-            "finos_aigf": "AIGF-EVL-03 Quality Gate Enforcement",
+            "finos_aigf": _finos_ref("mi-5"),
         },
         evidence_kinds=["adjudication_record", "bench_bundle"],
         category="evaluation",
@@ -432,7 +456,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 13(2) & 14 - Provenance of automated decisions",
             "nist_ai_rmf": "GOVERN-3.1",
             "iso_42001": "A.6.2 AI System Assessment",
-            "finos_aigf": "AIGF-GOV-03 Separation of Duties & Independence",
         },
         evidence_kinds=["adjudication_record", "audit_chain"],
         category="quality",
@@ -448,7 +471,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(1) - Code quality and static verification",
             "nist_ai_rmf": "MANAGE-1.1",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-DEV-01 Continuous Integration & Verification",
+            "finos_aigf": _finos_ref("mi-5"),
         },
         evidence_kinds=["ci_run", "sarif_report"],
         category="quality",
@@ -460,10 +483,9 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "Dynamic discovery and verification of agent skills against authorized catalogs and integrity signatures."
         ),
         references={
-            "owasp_skills": "AST01 - Untrusted Skill Execution",
+            "owasp_skills": _ast_ref("AST01"),
             "nist_ai_rmf": "MANAGE-1.3",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SKL-01 Skill Verification",
         },
         evidence_kinds=["skill_manifest", "audit_chain"],
         category="skills",
@@ -473,10 +495,10 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         title="Skill Execution Boundaries & Permissions",
         description="Fine-grained permission boundaries and scope restrictions for skill pack execution.",
         references={
-            "owasp_skills": "AST02 - Excessive Skill Permissions",
+            "owasp_skills": _ast_ref("AST04"),
             "nist_ai_rmf": "MANAGE-1.3",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SKL-02 Skill Privilege Isolation",
+            "finos_aigf": _finos_ref("mi-18"),
         },
         evidence_kinds=["audit_chain", "policy"],
         category="skills",
@@ -486,10 +508,9 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
         title="Untrusted Skill Quarantine & Code Review",
         description="Quarantine and explicit operator review for imported or community skill packs before activation.",
         references={
-            "owasp_skills": "AST04 - Malicious Skill Ingestion",
+            "owasp_skills": _ast_ref("AST01"),
             "nist_ai_rmf": "MANAGE-2.4",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SKL-03 Skill Ingestion & Quarantine",
         },
         evidence_kinds=["audit_chain", "approval_receipt"],
         category="skills",
@@ -502,7 +523,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 13(1) - Operational transparency",
             "nist_ai_rmf": "MANAGE-3.1",
             "iso_42001": "A.10.1 Monitoring and Evaluation",
-            "finos_aigf": "AIGF-OPS-01 Operational Telemetry & Health",
+            "finos_aigf": _finos_ref("mi-4"),
         },
         evidence_kinds=["status_dashboard", "metrics"],
         category="monitoring",
@@ -515,7 +536,7 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(2) - Performance monitoring and anomaly detection",
             "nist_ai_rmf": "MANAGE-3.2",
             "iso_42001": "A.10.1 Monitoring and Evaluation",
-            "finos_aigf": "AIGF-OPS-02 Anomaly Detection & Alerts",
+            "finos_aigf": _finos_ref("mi-4"),
         },
         evidence_kinds=["audit_chain", "alert_record"],
         category="monitoring",
@@ -531,7 +552,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 11 & Annex IV - Technical documentation",
             "nist_ai_rmf": "GOVERN-4.2",
             "iso_42001": "A.5.2 Documented Information",
-            "finos_aigf": "AIGF-DOC-01 Compliance Evidence Packaging",
         },
         evidence_kinds=["evidence_pack", "tech_doc"],
         category="documentation",
@@ -547,7 +567,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 13(3) - Instructions for use & limitation notice",
             "nist_ai_rmf": "MAP-1.2",
             "iso_42001": "A.5.2 Documented Information",
-            "finos_aigf": "AIGF-DOC-02 Capability & Limitation Notice",
         },
         evidence_kinds=["agent_card", "system_descriptor"],
         category="documentation",
@@ -563,7 +582,6 @@ STANDARD_CONTROLS: tuple[Control, ...] = (
             "eu_ai_act": "Article 15(1) - Resilient offline verification",
             "nist_ai_rmf": "MANAGE-1.3",
             "iso_42001": "A.8.2 Security Architecture",
-            "finos_aigf": "AIGF-SEC-06 Air-Gap & Isolation Support",
         },
         evidence_kinds=["verifier_receipt"],
         category="deployment",
@@ -601,12 +619,33 @@ class ControlRegistry:
         canonical definition process-wide, and every compliance claim made
         against that ID afterwards would mean something else. A blank ID is
         refused for the same reason -- it can never be cited.
+
+        The remaining checks refuse a control that would register cleanly and
+        then be unusable as evidence: a blank title or description leaves an
+        assessor nothing to assess against, an empty ``evidence_kinds`` names
+        a control no run can ever produce evidence for, and a framework key
+        outside :data:`KNOWN_FRAMEWORKS` is a typo that silently hides the
+        reference from ``list_controls(framework=...)``.
         """
         control_id = control.control_id
         if not control_id or control_id != control_id.strip():
             raise ValueError(f"control id must be non-empty with no surrounding whitespace, got {control_id!r}")
         if control_id in self._controls:
             raise ValueError(f"control {control_id!r} is already registered; unregister it first to redefine it")
+        if not control.title.strip():
+            raise ValueError(f"control {control_id!r} must have a non-empty title")
+        if not control.description.strip():
+            raise ValueError(f"control {control_id!r} must have a non-empty description")
+        if not control.evidence_kinds:
+            raise ValueError(
+                f"control {control_id!r} declares no evidence kinds; nothing could ever be filed against it"
+            )
+        unknown = sorted(set(control.references) - KNOWN_FRAMEWORKS)
+        if unknown:
+            raise ValueError(
+                f"control {control_id!r} references unknown framework(s) {', '.join(unknown)}; "
+                f"known frameworks: {', '.join(sorted(KNOWN_FRAMEWORKS))}"
+            )
         self._controls[control_id] = control
 
     def unregister(self, control_id: str) -> Control:
@@ -631,14 +670,20 @@ class ControlRegistry:
         """Return a list of any control IDs that are not present in the registry."""
         return [cid for cid in control_ids if cid not in self._controls]
 
-    def to_markdown_table(self) -> str:
-        """Generate a Markdown table of controls and their framework mappings."""
+    def to_markdown_table(self, framework: str | None = None) -> str:
+        """Generate a Markdown table of controls and their framework mappings.
+
+        ``framework`` filters exactly as :meth:`list_controls` does. Without
+        it the Markdown format rendered the whole catalogue while ``json``
+        and ``text`` rendered the filtered subset, so the same command with
+        the same ``--framework`` produced a different answer per format.
+        """
         headers = ["Control ID", "Title", "Frameworks", "Evidence Kinds"]
         lines = [
             "| " + " | ".join(headers) + " |",
             "| " + " | ".join(["---"] * len(headers)) + " |",
         ]
-        for c in self.list_controls():
+        for c in self.list_controls(framework=framework):
             fw_str = ", ".join(f"{k.upper()}" for k in sorted(c.references.keys()))
             ev_str = ", ".join(c.evidence_kinds)
             lines.append("| " + " | ".join([c.control_id, c.title, fw_str, ev_str]) + " |")

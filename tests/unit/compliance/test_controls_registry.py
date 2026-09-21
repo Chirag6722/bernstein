@@ -137,7 +137,13 @@ class TestRegistryExtensionContract:
     def _custom(control_id: str = "CTL-ORG-01"):
         from bernstein.compliance.controls import Control
 
-        return Control(control_id=control_id, title="Org-specific", description="custom", references={"iso_42001": "x"})
+        return Control(
+            control_id=control_id,
+            title="Org-specific",
+            description="custom",
+            references={"iso_42001": "x"},
+            evidence_kinds=["policy"],
+        )
 
     def test_registering_an_existing_id_is_refused_not_overwritten(self) -> None:
         from bernstein.compliance.controls import ControlRegistry
@@ -240,3 +246,137 @@ class TestRegisteredControlsCannotBeMutated:
         assert isinstance(payload["references"], dict)
         assert isinstance(payload["evidence_kinds"], list)
         payload["references"]["eu_ai_act"] = "safe to edit a copy"
+
+
+class TestCrosswalkAgreesWithCanonicalMaps:
+    """The registry cites external control ids; it never states what they mean.
+
+    ``owasp_asi.py`` and ``owasp_skills.py`` drive the evidence packs, so they
+    are what an auditor reads an ASI/AST id against. When this registry also
+    spelled the meaning out by hand the two disagreed -- ``ASI08`` was labelled
+    "Human-in-the-Loop Bypass / Failure" here and "Unbounded consumption"
+    there -- and nothing failed, because nothing compared them. These tests are
+    that comparison.
+    """
+
+    def test_every_asi_reference_is_the_canonical_label(self) -> None:
+        from bernstein.compliance import owasp_asi
+
+        cited = {
+            c.control_id: c.references["owasp_asi"]
+            for c in get_default_registry().list_controls()
+            if "owasp_asi" in c.references
+        }
+        assert cited, "the registry should cite at least one ASI control"
+        for control_id, label in cited.items():
+            asi_id = label.split(" - ", 1)[0]
+            assert label == owasp_asi.reference_label(asi_id), control_id
+
+    def test_every_ast_reference_is_the_canonical_label(self) -> None:
+        from bernstein.compliance import owasp_skills
+
+        cited = {
+            c.control_id: c.references["owasp_skills"]
+            for c in get_default_registry().list_controls()
+            if "owasp_skills" in c.references
+        }
+        assert cited, "the registry should cite at least one AST control"
+        for control_id, label in cited.items():
+            ast_id = label.split(" - ", 1)[0]
+            assert label == owasp_skills.reference_label(ast_id), control_id
+
+    def test_every_finos_reference_is_a_published_mitigation(self) -> None:
+        from bernstein.compliance import finos_aigf
+
+        cited = {
+            c.control_id: c.references["finos_aigf"]
+            for c in get_default_registry().list_controls()
+            if "finos_aigf" in c.references
+        }
+        assert cited, "the registry should cite at least one FINOS mitigation"
+        for control_id, label in cited.items():
+            mitigation_id = label.split(" - ", 1)[0]
+            assert mitigation_id in finos_aigf.MITIGATIONS, f"{control_id} cites unpublished {mitigation_id!r}"
+            assert label == finos_aigf.reference_label(mitigation_id), control_id
+
+    def test_no_control_uses_the_invented_aigf_vocabulary(self) -> None:
+        """FINOS numbers its mitigations ``mi-N``; ``AIGF-GOV-01`` resolves to nothing."""
+        for c in get_default_registry().list_controls():
+            assert not c.references.get("finos_aigf", "").startswith("AIGF-"), c.control_id
+
+    def test_an_unknown_external_id_cannot_be_cited(self) -> None:
+        """The label helpers are the gate: a made-up id raises instead of rendering."""
+        from bernstein.compliance import finos_aigf, owasp_asi, owasp_skills
+
+        for module, bad in ((owasp_asi, "ASI99"), (owasp_skills, "AST99"), (finos_aigf, "mi-999")):
+            with pytest.raises(KeyError):
+                module.reference_label(bad)
+
+
+class TestRegisterRefusesUnusableControls:
+    """A control that registers cleanly and cannot be assessed is worse than none."""
+
+    @staticmethod
+    def _control(**overrides: object) -> Control:
+        kwargs: dict[str, object] = {
+            "control_id": "CTL-ORG-99",
+            "title": "Org-specific",
+            "description": "custom",
+            "references": {"iso_42001": "A.1"},
+            "evidence_kinds": ["policy"],
+        }
+        kwargs.update(overrides)
+        return Control(**kwargs)  # type: ignore[arg-type]
+
+    def test_a_blank_title_is_refused(self) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        with pytest.raises(ValueError, match="non-empty title"):
+            ControlRegistry(controls=[]).register(self._control(title="   "))
+
+    def test_a_blank_description_is_refused(self) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        with pytest.raises(ValueError, match="non-empty description"):
+            ControlRegistry(controls=[]).register(self._control(description=""))
+
+    def test_a_control_with_no_evidence_kind_is_refused(self) -> None:
+        from bernstein.compliance.controls import ControlRegistry
+
+        with pytest.raises(ValueError, match="no evidence kinds"):
+            ControlRegistry(controls=[]).register(self._control(evidence_kinds=[]))
+
+    def test_an_unknown_framework_key_is_refused(self) -> None:
+        """A typo in a framework key hides the reference instead of reporting it."""
+        from bernstein.compliance.controls import ControlRegistry
+
+        with pytest.raises(ValueError, match="iso_42O01"):
+            ControlRegistry(controls=[]).register(self._control(references={"iso_42O01": "A.1"}))
+
+    def test_every_standard_control_satisfies_the_same_rules(self) -> None:
+        from bernstein.compliance.controls import KNOWN_FRAMEWORKS
+
+        for c in get_default_registry().list_controls():
+            assert c.title.strip(), c.control_id
+            assert c.description.strip(), c.control_id
+            assert c.evidence_kinds, c.control_id
+            assert set(c.references) <= KNOWN_FRAMEWORKS, c.control_id
+
+
+class TestMarkdownHonoursTheFrameworkFilter:
+    """``--framework`` meant different things per ``--format``."""
+
+    def test_the_markdown_table_is_filtered_like_json(self) -> None:
+        runner = CliRunner()
+        markdown = runner.invoke(compliance_group, ["controls", "--format", "markdown", "--framework", "owasp_asi"])
+        rendered = runner.invoke(compliance_group, ["controls", "--format", "json", "--framework", "owasp_asi"])
+        assert markdown.exit_code == 0, markdown.output
+        assert rendered.exit_code == 0, rendered.output
+
+        expected = [c["control_id"] for c in json.loads(rendered.stdout)]
+        body = [ln for ln in markdown.stdout.splitlines() if ln.startswith("| CTL-")]
+        assert [ln.split("|")[1].strip() for ln in body] == expected
+
+    def test_an_unfiltered_table_still_holds_every_control(self) -> None:
+        registry = get_default_registry()
+        assert registry.to_markdown_table().count("\n| CTL-") == len(registry.list_controls())
