@@ -180,7 +180,11 @@ def bench_run(
     # log reader will see it, and exit non-zero: the bundle still records
     # every refusal receipt, but "score 20%" alone cannot be told apart from
     # "one of five passed" (#5464 review, F4).
-    refused = [r for r in bundle.task_results if r.harness_output.get("refusal") == "budget_exceeded"]
+    # The same predicate the verifier scores against and the comparison
+    # counts. This read ``harness_output["refusal"]``, so a receipt carrying
+    # the canonical status and no harness output was refused, verified clean,
+    # and was never mentioned here.
+    refused = bundle.refused_results()
     if refused:
         click.echo(
             f"\nBudget exceeded: limit ${budget:.4f}, spent ${bundle.total_cost_usd:.4f}; "

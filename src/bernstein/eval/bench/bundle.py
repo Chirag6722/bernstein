@@ -21,6 +21,30 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+#: ``receipt["status"]`` for a task a budget refused before it ran.
+#:
+#: The marker lives here, beside the receipt it belongs to, because it is
+#: read by three places that have to agree -- the verifier, which scores a
+#: refusal instead of replaying it; the comparison, which counts refusals so
+#: a budget-cut run cannot read as a cheaper complete one; and the CLI
+#: summary. They disagreed: the first two looked at ``receipt.status`` and
+#: the third at ``harness_output["refusal"]``, so a receipt carrying one and
+#: not the other verified clean while going uncounted.
+#:
+#: ``status`` is the canonical field of the two. It is the semantic marker
+#: and it is inside the receipt, which the stored receipt hash covers.
+#:
+#: Read it through :func:`is_refusal` rather than comparing to it: a shared
+#: constant still leaves four call sites free to ask a different question of
+#: it, which is how they came apart the first time.
+REFUSED_STATUS: str = "refused"
+
+
+def is_refusal(receipt: Mapping[str, Any]) -> bool:
+    """Whether *receipt* records a task a budget refused before it ran."""
+    return receipt.get("status") == REFUSED_STATUS
+
+
 # ---------------------------------------------------------------------------
 # Per-task result embedded in a bundle
 # ---------------------------------------------------------------------------
@@ -182,6 +206,15 @@ class SubmissionBundle:
         if not self.task_results:
             return 0.0
         return sum(r.score for r in self.task_results) / len(self.task_results)
+
+    def refused_results(self) -> list[TaskResult]:
+        """Tasks a budget refused before they ran.
+
+        The one place the answer is computed, so the CLI summary, the
+        comparison's refusal counts and any later reader cannot drift into
+        asking it differently.
+        """
+        return [r for r in self.task_results if is_refusal(r.receipt)]
 
     @property
     def pass_rate(self) -> float:

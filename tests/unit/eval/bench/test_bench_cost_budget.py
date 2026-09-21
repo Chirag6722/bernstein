@@ -19,7 +19,7 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.eval.bench.bench_cli import bench_group
-from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult, harness_fingerprint
+from bernstein.eval.bench.bundle import REFUSED_STATUS, SubmissionBundle, TaskResult, harness_fingerprint
 from bernstein.eval.bench.compare import compare_bundles
 from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
@@ -489,3 +489,118 @@ class TestBudgetGate:
             tr.status is VerificationStatus.FABRICATED_SCORE and "refused task scores nothing" in tr.detail
             for tr in result.task_results
         )
+
+
+class TestOneCanonicalRefusalMarker:
+    """Three readers decide what a refusal is; they have to decide the same way.
+
+    The verifier scores a refusal instead of replaying it, the comparison
+    counts refusals so a budget-cut run cannot read as a cheaper complete one,
+    and `bench run` says so on stdout and exits non-zero. Two of them read
+    ``receipt["status"]`` and the third read ``harness_output["refusal"]``, so
+    a refusal receipt carrying only the canonical field verified clean, went
+    uncounted, and the run reported success.
+    """
+
+    @staticmethod
+    def _refusal_result(task_id: str = "t1") -> TaskResult:
+        """A refusal receipt with the canonical marker and nothing else.
+
+        Deliberately empty ``harness_output``: that is the shape the readers
+        disagreed about, and a reader that still needs the non-canonical
+        field fails here.
+        """
+        return TaskResult(
+            task_id=task_id,
+            task_hash="0" * 64,
+            receipt={
+                "journal_head": "",
+                "spine_head": "",
+                "run_id": f"refusal-{task_id}",
+                "refusal_reason": "budget_exceeded: limit $0.0100 exceeded (spent $0.0200)",
+                "status": REFUSED_STATUS,
+            },
+            passed=False,
+            score=0.0,
+            harness_output={},
+        )
+
+    def _bundle(self, results: list[TaskResult]) -> SubmissionBundle:
+        return SubmissionBundle(
+            suite_hash="a" * 64,
+            suite_version="golden-v1",
+            task_results=results,
+            scheduler_config={"scheduler": "default"},
+        )
+
+    def test_the_runner_writes_the_canonical_marker(self) -> None:
+        suite = BenchSuite(
+            version="golden-v1",
+            tasks=[
+                BenchTask(id=f"t{i}", description="d", steps=("s",), assertions=({"k": "v"},), category="c")
+                for i in range(3)
+            ],
+        )
+        bundle = BenchRunner(
+            suite=suite,
+            adapter=MockReplayAdapter(),
+            scheduler_config={"scheduler": "default"},
+            budget_usd=0.0,
+        ).run()
+        refusals = [r for r in bundle.task_results if r.receipt.get("status") == REFUSED_STATUS]
+        assert refusals, "a zero budget should refuse every task"
+
+    def test_the_comparison_counts_it(self) -> None:
+        a = self._bundle([self._refusal_result("t1")])
+        b = self._bundle([self._refusal_result("t1")])
+        report = compare_bundles(a, b)
+        assert report.refused_a == 1
+        assert report.refused_b == 1
+
+    def test_the_verifier_recognises_it(self) -> None:
+        from bernstein.eval.bench.runner import MockReplayAdapter as Adapter
+        from bernstein.eval.bench.verifier import BenchVerifier, VerificationStatus
+
+        suite = BenchSuite(
+            version="golden-v1",
+            tasks=[BenchTask(id="t1", description="d", steps=("s",), assertions=({"k": "v"},), category="c")],
+        )
+        result = self._refusal_result("t1")
+        result.task_hash = suite.tasks[0].content_hash()
+        bundle = SubmissionBundle(
+            suite_hash=suite.suite_hash,
+            suite_version=suite.version,
+            task_results=[result],
+            scheduler_config={"scheduler": "default"},
+        )
+        verified = BenchVerifier(suite=suite, adapter=Adapter()).verify(bundle)
+        assert verified.status is VerificationStatus.MATCH
+        assert "refused" in verified.task_results[0].detail
+
+    def test_the_summary_reader_is_the_same_predicate(self) -> None:
+        """`bench run`'s summary was the reader still on the non-canonical field.
+
+        It cannot be fed a hand-built bundle -- it always runs the runner, which
+        writes both fields -- so the check is on the predicate it now calls.
+        """
+        bundle = self._bundle([self._refusal_result("t1"), self._refusal_result("t2")])
+        assert [r.task_id for r in bundle.refused_results()] == ["t1", "t2"]
+        assert all(not r.harness_output for r in bundle.refused_results())
+
+    def test_the_cli_summary_reports_it(self, tmp_path: Path) -> None:
+        """End to end, through the installed command."""
+        suite_path = tmp_path / "suite.json"
+        BenchSuite(
+            version="golden-v1",
+            tasks=[
+                BenchTask(id=f"t{i}", description="d", steps=("s",), assertions=({"k": "v"},), category="c")
+                for i in range(3)
+            ],
+        ).save(suite_path)
+        out = tmp_path / "bundle.json"
+        result = CliRunner().invoke(
+            bench_group,
+            ["run", str(suite_path), "--out", str(out), "--stub-signer", "--budget", "0.0"],
+        )
+        assert result.exit_code == 2, result.output
+        assert "tasks refused and recorded as refusal receipts" in result.output

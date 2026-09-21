@@ -195,8 +195,8 @@ def compare_bundles(
             )
         )
 
-    refused_a = sum(1 for r in bundle_a.task_results if r.receipt.get("status") == "refused")
-    refused_b = sum(1 for r in bundle_b.task_results if r.receipt.get("status") == "refused")
+    refused_a = len(bundle_a.refused_results())
+    refused_b = len(bundle_b.refused_results())
 
     return CompareResult(
         bundle_a_hash=bundle_a.bundle_hash(),

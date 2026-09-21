@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bernstein.eval.bench.bundle import is_refusal
+
 if TYPE_CHECKING:
     from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
     from bernstein.eval.bench.runner import ReplayAdapter
@@ -224,7 +226,7 @@ class BenchVerifier:
         # verdict "fabricated". What a refusal receipt has to prove instead is
         # that the bundle claims nothing for the task: passed is False and the
         # score is zero. Anything else is a score attached to work not done.
-        if result.receipt.get("status") == "refused":
+        if is_refusal(result.receipt):
             if result.passed or result.score != 0.0:
                 return TaskVerificationResult(
                     task_id=task_id,

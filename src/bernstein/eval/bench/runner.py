@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from bernstein.eval.bench.bundle import SubmissionBundle, TaskResult
+from bernstein.eval.bench.bundle import REFUSED_STATUS, SubmissionBundle, TaskResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -198,7 +198,7 @@ class BenchRunner:
                     "refusal_reason": (
                         f"budget_exceeded: limit ${self.budget_usd:.4f} exceeded (spent ${cumulative_cost_usd:.4f})"
                     ),
-                    "status": "refused",
+                    "status": REFUSED_STATUS,
                 }
                 task_results.append(
                     TaskResult(
@@ -207,6 +207,8 @@ class BenchRunner:
                         receipt=refusal_receipt,
                         passed=False,
                         score=0.0,
+                        # Kept for readers that predate the canonical marker; the
+                        # marker a reader must use is the receipt's ``status``.
                         harness_output={"refusal": "budget_exceeded"},
                         tokens=0,
                         cost_usd=0.0,
