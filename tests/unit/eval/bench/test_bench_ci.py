@@ -103,6 +103,31 @@ class TestSarifGeneration:
         assert driver["semanticVersion"] == version("bernstein")
         assert driver["properties"]["suiteVersion"] == "golden-v1"
 
+    def test_sarif_does_not_default_semantic_version_to_zero(self) -> None:
+        """An uninstalled package omits the field rather than claiming 0.0.0.
+
+        SARIF makes ``semanticVersion`` optional, and the report is an
+        operator-facing artefact: "unknown" has to be spelled as absence, not
+        as the factual claim that the tool is at version 0.0.0. A consumer
+        comparing versions would otherwise read a real, and wrong, answer.
+        """
+        from importlib.metadata import PackageNotFoundError
+
+        bundle = _make_test_bundle(tasks=[{"id": "t", "passed": True}])
+        with patch(
+            "importlib.metadata.version",
+            side_effect=PackageNotFoundError("bernstein"),
+        ):
+            driver = bundle_to_sarif(bundle)["runs"][0]["tool"]["driver"]
+
+        assert "semanticVersion" not in driver, (
+            f"semanticVersion must be omitted when the package is not installed, got {driver.get('semanticVersion')!r}"
+        )
+        # The rest of the driver is unaffected: absence of a version is not a
+        # reason to lose the identity of the tool or the suite it ran.
+        assert driver["name"] == "bernstein-bench"
+        assert driver["properties"]["suiteVersion"] == "golden-v1"
+
 
 class TestScorecardEvaluation:
     """Test scorecard calculation, baseline comparison, and conclusions."""

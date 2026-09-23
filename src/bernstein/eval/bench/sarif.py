@@ -16,14 +16,21 @@ if TYPE_CHECKING:
 SARIF_SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
 
 
-def _bernstein_version() -> str:
-    """The tool's own version: ``semanticVersion`` describes the tool, not the suite."""
+def _bernstein_version() -> str | None:
+    """The tool's own version: ``semanticVersion`` describes the tool, not the suite.
+
+    ``None`` when the package is not installed. The caller omits the field
+    rather than substituting a placeholder: SARIF makes ``semanticVersion``
+    optional, and a report is read by operators and by whatever consumes the
+    CI artefact, so "the version is unknown here" must not be spelled as the
+    factual claim "the version is 0.0.0".
+    """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
         return version("bernstein")
     except PackageNotFoundError:
-        return "0.0.0"
+        return None
 
 
 def bundle_to_sarif(
@@ -79,32 +86,35 @@ def bundle_to_sarif(
             ]
         results.append(result)
 
+    driver: dict[str, Any] = {
+        "name": "bernstein-bench",
+        "informationUri": "https://github.com/sipyourdrink-ltd/bernstein",
+    }
+    # Omitted, never defaulted. `semanticVersion` is optional in SARIF, so an
+    # uninstalled package leaves the field out instead of asserting a version
+    # the tool does not have.
+    tool_version = _bernstein_version()
+    if tool_version is not None:
+        driver["semanticVersion"] = tool_version
+    driver["properties"] = {
+        "suiteVersion": bundle.suite_version,
+        "suiteHash": bundle.suite_hash,
+        "bundleHash": bundle.bundle_hash(),
+    }
+    driver["rules"] = [
+        {
+            "id": r["ruleId"],
+            "shortDescription": {"text": f"Benchmark rule for task {r['ruleId']}"},
+        }
+        for r in results
+    ]
+
     return {
         "version": "2.1.0",
         "$schema": SARIF_SCHEMA_URI,
         "runs": [
             {
-                "tool": {
-                    "driver": {
-                        "name": "bernstein-bench",
-                        "informationUri": "https://github.com/sipyourdrink-ltd/bernstein",
-                        "semanticVersion": _bernstein_version(),
-                        "properties": {
-                            "suiteVersion": bundle.suite_version,
-                            "suiteHash": bundle.suite_hash,
-                            "bundleHash": bundle.bundle_hash(),
-                        },
-                        "rules": [
-                            {
-                                "id": r["ruleId"],
-                                "shortDescription": {
-                                    "text": f"Benchmark rule for task {r['ruleId']}",
-                                },
-                            }
-                            for r in results
-                        ],
-                    }
-                },
+                "tool": {"driver": driver},
                 "results": results,
             }
         ],
