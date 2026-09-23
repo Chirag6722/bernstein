@@ -217,17 +217,26 @@ class BenchRunner:
                 )
                 continue
 
-            t0 = time.perf_counter()
             receipt = self.adapter.run_task(task, self.scheduler_config)
-            t1 = time.perf_counter()
 
             passed, score, harness_output = self.adapter.score_task(task, receipt)
 
-            tokens = int(receipt.get("tokens", 0))
-            cost_usd = max(0.0, float(receipt.get("cost_usd", 0.0)))
-            duration_seconds = float(receipt.get("duration_seconds", max(0.0, t1 - t0)))
+            # Report what the harness reported, and nothing else. A missing
+            # metric stays missing:
+            #
+            #   * 0 tokens / $0.00 would be a fact the run does not have, and
+            #     the bundle is evidence — `has_resource_metrics()` would then
+            #     be true for every task and the budget gate would read a
+            #     fabricated zero as a real measurement;
+            #   * a wall-clock `t1 - t0` fallback is worse still, because it
+            #     is different on every run, so two replays of the same suite
+            #     would produce different bundle hashes and the byte-identical
+            #     determinism the bundle depends on would be gone.
+            tokens = None if receipt.get("tokens") is None else int(receipt["tokens"])
+            cost_usd = None if receipt.get("cost_usd") is None else max(0.0, float(receipt["cost_usd"]))
+            duration_seconds = None if receipt.get("duration_seconds") is None else float(receipt["duration_seconds"])
 
-            cumulative_cost_usd += cost_usd
+            cumulative_cost_usd += cost_usd or 0.0
 
             task_results.append(
                 TaskResult(

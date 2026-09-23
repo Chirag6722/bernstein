@@ -19,7 +19,13 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.eval.bench.bench_cli import bench_group
-from bernstein.eval.bench.bundle import REFUSED_STATUS, SubmissionBundle, TaskResult, harness_fingerprint
+from bernstein.eval.bench.bundle import (
+    BUNDLE_SCHEMA_VERSION,
+    REFUSED_STATUS,
+    SubmissionBundle,
+    TaskResult,
+    harness_fingerprint,
+)
 from bernstein.eval.bench.compare import compare_bundles
 from bernstein.eval.bench.runner import BenchRunner, MockReplayAdapter
 from bernstein.eval.bench.suite import BenchSuite, BenchTask
@@ -303,9 +309,15 @@ class TestBundleComparison:
             assert "Refusing to rank" in stream, (fmt, result.output)
 
     def test_cli_compare_of_bundles_without_metrics_reads_as_before(self, tmp_path: Path) -> None:
-        """A pre-#5464 pair (no resource metrics) prints no cost block at all."""
-        b1 = _make_sample_bundle(task_specs=[{"id": "t1", "tokens": 0, "cost_usd": 0.0, "duration_seconds": 0.0}])
-        b2 = _make_sample_bundle(task_specs=[{"id": "t1", "tokens": 0, "cost_usd": 0.0, "duration_seconds": 0.0}])
+        """A pre-#5464 pair (no resource metrics) prints no cost block at all.
+
+        "No metrics" is ``None``, not zero. A bundle that reported ``0``
+        tokens has reported a metric and gets the block; this case is about a
+        bundle where the harness reported nothing at all.
+        """
+        unreported = {"id": "t1", "tokens": None, "cost_usd": None, "duration_seconds": None}
+        b1 = _make_sample_bundle(task_specs=[dict(unreported)])
+        b2 = _make_sample_bundle(task_specs=[dict(unreported)])
         p1, p2 = tmp_path / "b1.json", tmp_path / "b2.json"
         b1.save(p1)
         b2.save(p2)
@@ -604,3 +616,145 @@ class TestOneCanonicalRefusalMarker:
         )
         assert result.exit_code == 2, result.output
         assert "tasks refused and recorded as refusal receipts" in result.output
+
+
+class TestUnreportedMetricsAreNotFacts:
+    """A metric the harness never reported must not be recorded as a value (#5464).
+
+    Two separate properties are at stake. The bundle is evidence, so an
+    absent cost must not read as ``$0.00``; and the bundle hash is a
+    determinism guarantee, so nothing derived from the wall clock may reach
+    it.
+    """
+
+    class _SilentAdapter:
+        """Reports a verdict and no resource metrics at all."""
+
+        def run_task(self, task: BenchTask, scheduler_config: dict[str, Any]) -> dict[str, Any]:
+            task_hash = task.content_hash()
+            return {
+                "journal_head": hashlib.sha256(f"j:{task_hash}".encode()).hexdigest(),
+                "spine_head": hashlib.sha256(f"s:{task_hash}".encode()).hexdigest(),
+                "run_id": f"silent-{task_hash[:12]}",
+                "events": [],
+            }
+
+        def score_task(self, task: BenchTask, receipt: dict[str, Any]) -> tuple[bool, float, dict[str, Any]]:
+            return True, 1.0, {}
+
+    @staticmethod
+    def _suite() -> BenchSuite:
+        return BenchSuite(
+            version="golden-v1",
+            tasks=[BenchTask(id="t1", description="d", steps=(), assertions=())],
+        )
+
+    def test_unreported_metrics_are_absent_not_zero(self) -> None:
+        bundle = BenchRunner(
+            suite=self._suite(),
+            adapter=self._SilentAdapter(),
+            scheduler_config={"scheduler": "default"},
+        ).run()
+
+        result = bundle.task_results[0]
+        assert result.tokens is None
+        assert result.cost_usd is None
+        assert result.duration_seconds is None
+        assert not result.has_resource_metrics()
+
+        # And the serialised form omits them rather than writing nulls or
+        # zeros: a consumer that coerces must not be handed a number.
+        row = result.to_dict()
+        assert "tokens" not in row
+        assert "cost_usd" not in row
+        assert "duration_seconds" not in row
+
+    def test_a_reported_zero_still_counts_as_reported(self) -> None:
+        """0 is a measurement. Only absence means "not measured"."""
+        result = TaskResult(
+            task_id="t1",
+            task_hash="h",
+            receipt={"journal_head": "j", "spine_head": "s"},
+            passed=True,
+            score=1.0,
+            tokens=0,
+            cost_usd=0.0,
+            duration_seconds=0.0,
+        )
+        assert result.has_resource_metrics()
+        row = result.to_dict()
+        assert row["tokens"] == 0
+        assert row["cost_usd"] == 0.0
+        assert row["duration_seconds"] == 0.0
+
+    def test_bundle_hash_determinism_preserved(self) -> None:
+        """Two runs of one suite hash identically when no metrics are reported.
+
+        The previous code substituted wall-clock ``t1 - t0`` for an
+        unreported duration, so the value differed on every run and two
+        replays of the same suite produced different bundle hashes. This is
+        the regression guard for that.
+        """
+        suite = self._suite()
+        cfg = {"scheduler": "default"}
+        first = BenchRunner(suite=suite, adapter=self._SilentAdapter(), scheduler_config=cfg).run()
+        second = BenchRunner(suite=suite, adapter=self._SilentAdapter(), scheduler_config=cfg).run()
+
+        # submitted_at is a wall-clock stamp by design and is not part of the
+        # per-task payload under test, so compare the task rows directly.
+        assert [r.to_dict() for r in first.task_results] == [r.to_dict() for r in second.task_results]
+
+    def test_totals_sum_what_was_reported(self) -> None:
+        """An unreported metric contributes nothing rather than a zero."""
+        bundle = _make_sample_bundle(
+            task_specs=[
+                {"id": "t1", "tokens": 30, "cost_usd": 0.02, "duration_seconds": 1.0},
+                {"id": "t2", "tokens": None, "cost_usd": None, "duration_seconds": None},
+            ]
+        )
+        assert bundle.total_tokens == 30
+        assert bundle.total_cost_usd == pytest.approx(0.02)
+        assert bundle.total_duration_seconds == pytest.approx(1.0)
+
+
+class TestBundleSchemaVersion:
+    """The bundle declares its schema version, and old bundles keep their hash (#5464)."""
+
+    def test_a_new_bundle_declares_the_current_schema_version(self) -> None:
+        bundle = _make_sample_bundle(task_specs=[{"id": "t1"}])
+        assert bundle.schema_version == BUNDLE_SCHEMA_VERSION
+        assert bundle.to_dict()["schema_version"] == BUNDLE_SCHEMA_VERSION
+
+    def test_a_version_1_bundle_keeps_its_hash_and_omits_the_key(self) -> None:
+        """A bundle written before the field existed must still verify.
+
+        Its stored hash was computed over a payload with no ``schema_version``
+        key, so version 1 must not contribute one — otherwise every
+        pre-existing bundle fails the integrity check it exists to pass.
+        """
+        bundle = _make_sample_bundle(task_specs=[{"id": "t1"}])
+        legacy = SubmissionBundle(
+            suite_hash=bundle.suite_hash,
+            suite_version=bundle.suite_version,
+            task_results=bundle.task_results,
+            scheduler_config=bundle.scheduler_config,
+            submitted_at=bundle.submitted_at,
+            schema_version=1,
+        )
+        assert "schema_version" not in legacy.to_dict()
+        # Round-trips back to version 1 rather than being silently upgraded.
+        assert SubmissionBundle.from_dict(legacy.to_dict()).schema_version == 1
+        assert SubmissionBundle.from_dict(legacy.to_dict()).bundle_hash() == legacy.bundle_hash()
+
+    def test_the_version_changes_the_hash(self) -> None:
+        """The declared version is bound into the hash, not merely reported."""
+        bundle = _make_sample_bundle(task_specs=[{"id": "t1"}])
+        legacy = SubmissionBundle(
+            suite_hash=bundle.suite_hash,
+            suite_version=bundle.suite_version,
+            task_results=bundle.task_results,
+            scheduler_config=bundle.scheduler_config,
+            submitted_at=bundle.submitted_at,
+            schema_version=1,
+        )
+        assert bundle.bundle_hash() != legacy.bundle_hash()

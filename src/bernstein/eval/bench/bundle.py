@@ -83,9 +83,14 @@ class TaskResult:
     # none of them, and its stored hash was computed without them, so
     # emitting zeros on reload would fail the very hash check that guards
     # it against tampering. Same rule as SubmissionBundle.holdout_hash.
-    tokens: int = 0
-    cost_usd: float = 0.0
-    duration_seconds: float = 0.0
+    #
+    # ``None`` means "the harness did not report this", which is not the same
+    # claim as ``0``. A bundle is evidence, so an unreported cost must not be
+    # readable as "this task was free" — and a genuinely reported ``0`` must
+    # still count as reported, which a truthiness test cannot express.
+    tokens: int | None = None
+    cost_usd: float | None = None
+    duration_seconds: float | None = None
 
     def __post_init__(self) -> None:
         # If caller didn't supply stored_receipt_hash, derive it now.
@@ -103,8 +108,14 @@ class TaskResult:
         return self.stored_receipt_hash
 
     def has_resource_metrics(self) -> bool:
-        """True when any resource metric was recorded for this task."""
-        return bool(self.tokens or self.cost_usd or self.duration_seconds)
+        """True when any resource metric was *reported* for this task.
+
+        Presence, not truthiness: a harness that genuinely reported zero
+        tokens has reported a metric, and a task with nothing reported has
+        not. The old truthiness test conflated the two, so a real zero was
+        indistinguishable from silence.
+        """
+        return any(m is not None for m in (self.tokens, self.cost_usd, self.duration_seconds))
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -118,9 +129,14 @@ class TaskResult:
             "score": self.score,
             "harness_output": self.harness_output,
         }
-        if self.has_resource_metrics():
+        # Each metric is emitted only if it was reported. Emitting a key whose
+        # value is null would put "unknown" and "zero" in the same shape for
+        # any consumer that coerces, so absence carries the distinction.
+        if self.tokens is not None:
             d["tokens"] = self.tokens
+        if self.cost_usd is not None:
             d["cost_usd"] = self.cost_usd
+        if self.duration_seconds is not None:
             d["duration_seconds"] = self.duration_seconds
         return d
 
@@ -130,6 +146,16 @@ class TaskResult:
 # ---------------------------------------------------------------------------
 
 FINGERPRINT_SCHEMA_VERSION = 1
+
+#: Schema version of the submission bundle itself (#5464).
+#:
+#: 1 is the implicit version of every bundle written before this field
+#: existed; it is never written, only inferred on load. 2 adds the optional
+#: per-task resource metrics (``tokens`` / ``cost_usd`` / ``duration_seconds``),
+#: which are omitted rather than zero-filled when the harness did not report
+#: them — a reader must know which of the two shapes it is holding before it
+#: can tell "no cost recorded" from "cost was zero".
+BUNDLE_SCHEMA_VERSION = 2
 
 
 def harness_fingerprint(scheduler_config: Mapping[str, Any]) -> str:
@@ -187,6 +213,11 @@ class SubmissionBundle:
     harness_fingerprint: str = ""
     # Lambda value for scoring trade-off (if applicable, otherwise default).
     lambda_value: float = 0.5
+    # Schema version of this bundle (#5464). Newly built bundles declare the
+    # current version; `from_dict` infers 1 for a bundle written before the
+    # field existed, so the hash of an old bundle still recomputes to its
+    # stored value — same backward-compatibility rule as `holdout_hash`.
+    schema_version: int = BUNDLE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         # If caller didn't supply a fingerprint, derive it now — same
@@ -222,17 +253,21 @@ class SubmissionBundle:
             return 0.0
         return sum(1 for r in self.task_results if r.passed) / len(self.task_results)
 
+    # The totals sum what was reported and ignore what was not. An unreported
+    # metric contributes nothing rather than a zero, so a suite where half the
+    # tasks reported no cost sums the half that did instead of quietly
+    # averaging the other half down.
     @property
     def total_tokens(self) -> int:
-        return sum(r.tokens for r in self.task_results)
+        return sum(r.tokens for r in self.task_results if r.tokens is not None)
 
     @property
     def total_cost_usd(self) -> float:
-        return sum(r.cost_usd for r in self.task_results)
+        return sum(r.cost_usd for r in self.task_results if r.cost_usd is not None)
 
     @property
     def total_duration_seconds(self) -> float:
-        return sum(r.duration_seconds for r in self.task_results)
+        return sum(r.duration_seconds for r in self.task_results if r.duration_seconds is not None)
 
     @property
     def resolve_rate(self) -> float:
@@ -294,6 +329,12 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             payload_dict["holdout_hash"] = self.holdout_hash
+        # Bound into the hash only from version 2 onward. A version-1 bundle
+        # never carried the key, and its stored hash was computed without it,
+        # so adding it unconditionally would fail every pre-existing bundle's
+        # integrity check on reload.
+        if self.schema_version > 1:
+            payload_dict["schema_version"] = self.schema_version
         payload = json.dumps(
             payload_dict,
             sort_keys=True,
@@ -328,6 +369,8 @@ class SubmissionBundle:
         }
         if self.holdout_hash:
             d["holdout_hash"] = self.holdout_hash
+        if self.schema_version > 1:
+            d["schema_version"] = self.schema_version
         return d
 
     def save(self, path: Path) -> None:
@@ -360,9 +403,12 @@ class SubmissionBundle:
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],
-                tokens=r.get("tokens", 0),
-                cost_usd=float(r.get("cost_usd", 0.0)),
-                duration_seconds=float(r.get("duration_seconds", 0.0)),
+                # Absent stays absent. Restoring a missing metric as 0 would
+                # invent the reading on reload and change the recomputed hash
+                # against the stored one.
+                tokens=None if r.get("tokens") is None else int(r["tokens"]),
+                cost_usd=None if r.get("cost_usd") is None else float(r["cost_usd"]),
+                duration_seconds=(None if r.get("duration_seconds") is None else float(r["duration_seconds"])),
             )
             for r in raw["task_results"]
         ]
@@ -377,6 +423,10 @@ class SubmissionBundle:
             holdout_hash=raw.get("holdout_hash", ""),
             harness_fingerprint=raw.get("harness_fingerprint", ""),
             lambda_value=raw.get("lambda_value", 0.5),
+            # A bundle with no declared version is a version-1 bundle. Do not
+            # default it to the current version: that would add the key to the
+            # recomputed hash payload and break its stored hash.
+            schema_version=int(raw.get("schema_version", 1)),
         )
         # Integrity guard: recompute hash and compare.
         if bundle.bundle_hash() != raw["bundle_hash"]:

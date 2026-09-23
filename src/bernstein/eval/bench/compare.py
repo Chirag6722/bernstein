@@ -186,12 +186,16 @@ def compare_bundles(
                 passed_b=rb.passed if rb else False,
                 score_a=ra.score if ra else 0.0,
                 score_b=rb.score if rb else 0.0,
-                cost_a=ra.cost_usd if ra else 0.0,
-                cost_b=rb.cost_usd if rb else 0.0,
-                tokens_a=ra.tokens if ra else 0,
-                tokens_b=rb.tokens if rb else 0,
-                duration_a=ra.duration_seconds if ra else 0.0,
-                duration_b=rb.duration_seconds if rb else 0.0,
+                # A task that is absent, and a task whose harness reported no
+                # metric, both contribute nothing to a delta. The comparison
+                # arithmetic needs a number; the distinction between the two
+                # is carried by the bundle, not by this row.
+                cost_a=(ra.cost_usd or 0.0) if ra else 0.0,
+                cost_b=(rb.cost_usd or 0.0) if rb else 0.0,
+                tokens_a=(ra.tokens or 0) if ra else 0,
+                tokens_b=(rb.tokens or 0) if rb else 0,
+                duration_a=(ra.duration_seconds or 0.0) if ra else 0.0,
+                duration_b=(rb.duration_seconds or 0.0) if rb else 0.0,
             )
         )
 
