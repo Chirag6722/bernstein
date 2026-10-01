@@ -207,8 +207,7 @@ def is_forbidden_rule_path(rule: str) -> bool:
     """Determine if a forbidden rule is path-like or identifier-like."""
     norm = rule.replace("\\", "/")
     return "/" in norm or any(
-        norm.endswith(ext)
-        for ext in (".py", ".sql", ".md", ".json", ".yaml", ".yml", ".toml", ".ts", ".js", ".html")
+        norm.endswith(ext) for ext in (".py", ".sql", ".md", ".json", ".yaml", ".yml", ".toml", ".ts", ".js", ".html")
     )
 
 

@@ -262,7 +262,9 @@ class TestGoalDriftSerialization:
         reconstructed = DriftStepMeasurement.from_dict(data)
         assert reconstructed.hard_drift_score == raw_score
 
-    def test_suite_carries_contract_and_reflects_mutated_contract_offline(self, sample_drift_task: GoalDriftTask) -> None:
+    def test_suite_carries_contract_and_reflects_mutated_contract_offline(
+        self, sample_drift_task: GoalDriftTask
+    ) -> None:
         """Blocker 4 regression: Carry contract in BenchTask. Mutating it must change offline evaluation."""
         bench_task = sample_drift_task.to_bench_task()
 
