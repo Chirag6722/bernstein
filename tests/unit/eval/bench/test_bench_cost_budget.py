@@ -192,7 +192,7 @@ class TestPreExistingBundlesStillLoad:
         # Re-saving emits no zeros: the task record keeps the legacy key set.
         assert loaded.to_dict()["task_results"][0].keys() == task_row.keys()
         assert loaded.total_cost_usd == 0.0
-        result = BenchVerifier(suite=suite, adapter=MockReplayAdapter()).verify(loaded)
+        result = BenchVerifier(suite=suite, adapter=MockReplayAdapter(), require_signature=False).verify(loaded)
         assert result.status is VerificationStatus.MATCH, result.report()
 
     def test_bundle_with_resource_metrics_binds_them_into_the_hash(self) -> None:
@@ -469,7 +469,7 @@ class TestBudgetGate:
         suite = build_golden_suite_v1()
         bundle = BenchRunner(suite=suite, adapter=MockReplayAdapter(), scheduler_config={}, budget_usd=0.001).run()
         assert any(r.harness_output.get("refusal") == "budget_exceeded" for r in bundle.task_results)
-        result = BenchVerifier(suite=suite, adapter=MockReplayAdapter()).verify(bundle)
+        result = BenchVerifier(suite=suite, adapter=MockReplayAdapter(), require_signature=False).verify(bundle)
         assert result.status is VerificationStatus.MATCH, [
             (tr.task_id, tr.status.value, tr.detail)
             for tr in result.task_results
@@ -585,7 +585,7 @@ class TestOneCanonicalRefusalMarker:
             task_results=[result],
             scheduler_config={"scheduler": "default"},
         )
-        verified = BenchVerifier(suite=suite, adapter=Adapter()).verify(bundle)
+        verified = BenchVerifier(suite=suite, adapter=Adapter(), require_signature=False).verify(bundle)
         assert verified.status is VerificationStatus.MATCH
         assert "refused" in verified.task_results[0].detail
 

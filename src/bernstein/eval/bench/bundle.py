@@ -133,6 +133,12 @@ class TaskResult:
         # If caller didn't supply stored_receipt_hash, derive it now.
         if not self.stored_receipt_hash:
             self.stored_receipt_hash = self._compute_receipt_hash(self.receipt)
+        if self.cost is None and self.has_resource_metrics():
+            self.cost = TaskCost(
+                tokens=self.tokens or 0,
+                cost_usd=self.cost_usd or 0.0,
+                wall_time_s=self.duration_seconds or 0.0,
+            )
 
     @staticmethod
     def _compute_receipt_hash(receipt: dict[str, Any]) -> str:

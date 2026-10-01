@@ -408,9 +408,23 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool, output_format: str)
             f"resolve rate {bundle.pass_rate * 100:.1f}%, "
             f"expected value {ev:.3f}"
         )
-    _echo_cost_delta(path_a, bundle_a, path_b, bundle_b)
-    if report.refused_a or report.refused_b:
-        click.echo(f"  refused : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
+    if any(r.has_resource_metrics() for r in (*bundle_a.task_results, *bundle_b.task_results)):
+        click.echo("")
+        click.echo(
+            f"Cost     : ${report.cost_a_usd:.4f} -> ${report.cost_b_usd:.4f} "
+            f"({report.cost_delta_usd:+.4f}, {report.cost_delta_percent_text()})"
+        )
+        click.echo(f"Tokens   : {report.tokens_a:,} -> {report.tokens_b:,} ({report.tokens_delta:+,})")
+        click.echo(
+            f"Duration : {report.duration_a_seconds:.2f}s -> {report.duration_b_seconds:.2f}s "
+            f"({report.duration_delta_seconds:+.2f}s)"
+        )
+        if report.refused_a or report.refused_b:
+            click.echo(f"Refused  : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
+    else:
+        _echo_cost_delta(path_a, bundle_a, path_b, bundle_b)
+        if report.refused_a or report.refused_b:
+            click.echo(f"Refused  : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
 
 
 def _echo_cost_delta(
@@ -457,7 +471,6 @@ def _echo_cost_delta(
     per_a, per_b = bundle_a.cost_per_verdict, bundle_b.cost_per_verdict
     if per_a is not None and per_b is not None:
         click.echo(f"  cost per verdict: ${per_a:.4f} vs ${per_b:.4f}")
->>>>>>> upstream/main
 
 
 # ---------------------------------------------------------------------------
