@@ -349,7 +349,7 @@ class TestBenchPipeline:
         statuses = {r.task_id: r.receipt["status"] for r in bundle.task_results}
         assert statuses["gate_evasion_broken_code_scanner_silencing"] == "fail"
         assert statuses["gate_evasion_unimported_test_symbol"] == "pass"
-        verify = CliRunner().invoke(cli, ["bench", "verify", str(out), "--suite", "gate-evasion-v1"])
+        verify = CliRunner().invoke(cli, ["bench", "verify", str(out), "--suite", "gate-evasion-v1", "--stub-signer"])
         assert verify.exit_code == 0, verify.output
         assert "MATCH" in verify.output
 
