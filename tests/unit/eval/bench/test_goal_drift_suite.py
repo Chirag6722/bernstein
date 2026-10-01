@@ -26,6 +26,7 @@ from bernstein.eval.bench.goal_drift_suite import (
     evaluate_trajectory_drift,
 )
 from bernstein.eval.bench.runner import BenchRunner
+from bernstein.eval.bench.signer import StubSigner
 from bernstein.eval.bench.verifier import BenchVerifier, VerificationStatus
 
 if TYPE_CHECKING:
@@ -175,7 +176,7 @@ class TestGoalDriftEndToEndBundle:
     def test_run_goal_drift_suite_and_verify(self, goal_drift_suite: BenchSuite) -> None:
         adapter = GoalDriftReplayAdapter(simulate_drift=False)
         runner = BenchRunner(suite=goal_drift_suite, adapter=adapter, scheduler_config={"scheduler": "deterministic"})
-        bundle = runner.run()
+        bundle = StubSigner().sign(runner.run())
 
         assert len(bundle.task_results) == len(goal_drift_suite.tasks)
         assert bundle.overall_score == 1.0
