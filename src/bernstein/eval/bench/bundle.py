@@ -50,6 +50,35 @@ def is_refusal(receipt: Mapping[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class TaskCost:
+    """Tokens, money and wall time for one task.
+
+    Recorded per task rather than per suite so two bundles can be compared on
+    cost the way they are compared on score: a suite total answers "did this
+    get more expensive", and only the per-task rows answer "where".
+    """
+
+    tokens: int = 0
+    cost_usd: float = 0.0
+    wall_time_s: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tokens": self.tokens,
+            "cost_usd": self.cost_usd,
+            "wall_time_s": self.wall_time_s,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> TaskCost:
+        return cls(
+            tokens=int(raw.get("tokens", 0)),
+            cost_usd=float(raw.get("cost_usd", 0.0)),
+            wall_time_s=float(raw.get("wall_time_s", 0.0)),
+        )
+
+
 @dataclass
 class TaskResult:
     """
@@ -74,6 +103,14 @@ class TaskResult:
     score: float  # [0.0, 1.0]
     # Raw harness output for debugging.
     harness_output: dict[str, Any] = field(default_factory=dict)
+    #: What this verdict COST, or ``None`` when the run did not measure it.
+    #:
+    #: ``None`` rather than zeros, and the distinction is load-bearing twice
+    #: over. A zero would read as a free task and drag a suite total towards
+    #: nothing; and it is what keeps an existing bundle loadable, because an
+    #: unmeasured cost is omitted from ``to_dict`` entirely and so does not
+    #: enter ``bundle_hash`` (#5464).
+    cost: TaskCost | None = None
     # SHA-256 of the receipt bytes at emit time.  Populated by the runner at
     # construction time and restored verbatim from the JSON at load time.
     # The verifier recomputes this from the live receipt and compares.
@@ -129,15 +166,14 @@ class TaskResult:
             "score": self.score,
             "harness_output": self.harness_output,
         }
-        # Each metric is emitted only if it was reported. Emitting a key whose
-        # value is null would put "unknown" and "zero" in the same shape for
-        # any consumer that coerces, so absence carries the distinction.
         if self.tokens is not None:
             d["tokens"] = self.tokens
         if self.cost_usd is not None:
             d["cost_usd"] = self.cost_usd
         if self.duration_seconds is not None:
             d["duration_seconds"] = self.duration_seconds
+        if self.cost is not None:
+            d["cost"] = self.cost.to_dict()
         return d
 
 
@@ -346,6 +382,45 @@ class SubmissionBundle:
     # Serialisation
     # ------------------------------------------------------------------
 
+    @property
+    def total_cost(self) -> TaskCost | None:
+        """Suite totals, or ``None`` when no task in the run measured its cost.
+
+        ``None`` rather than zeros for the same reason a task's is: a run that
+        did not measure cost and a run that was free are different facts, and
+        a suite total of `$0.00` reads as the second.
+
+        Tasks that DID measure are summed even when some did not, so a partial
+        run reports what it knows. `measured_tasks` says how many that was, so
+        the total is never mistaken for the whole suite.
+        """
+        measured = [r.cost for r in self.task_results if r.cost is not None]
+        if not measured:
+            return None
+        return TaskCost(
+            tokens=sum(c.tokens for c in measured),
+            cost_usd=sum(c.cost_usd for c in measured),
+            wall_time_s=sum(c.wall_time_s for c in measured),
+        )
+
+    @property
+    def measured_tasks(self) -> int:
+        """How many task results carry a cost, so a total can be read in context."""
+        return sum(1 for r in self.task_results if r.cost is not None)
+
+    @property
+    def cost_per_verdict(self) -> float | None:
+        """Money per task that produced a verdict. ``None`` when unmeasured.
+
+        Divided by the tasks that were MEASURED, not by every task in the
+        suite: mixing the two denominators is how a partially-instrumented run
+        reports a cost per verdict lower than any verdict actually cost.
+        """
+        total = self.total_cost
+        if total is None or self.measured_tasks == 0:
+            return None
+        return total.cost_usd / self.measured_tasks
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "bundle_hash": self.bundle_hash(),
@@ -371,6 +446,11 @@ class SubmissionBundle:
             d["holdout_hash"] = self.holdout_hash
         if self.schema_version > 1:
             d["schema_version"] = self.schema_version
+        total = self.total_cost
+        if total is not None:
+            d["total_cost"] = total.to_dict()
+            d["measured_tasks"] = self.measured_tasks
+            d["cost_per_verdict"] = self.cost_per_verdict
         return d
 
     def save(self, path: Path) -> None:
@@ -400,6 +480,10 @@ class SubmissionBundle:
                 passed=r["passed"],
                 score=r["score"],
                 harness_output=r.get("harness_output", {}),
+                # Absent on a bundle written before costs were recorded, and
+                # `None` is the honest value for that: the run did not measure
+                # it. Zeros would read as a free task.
+                cost=TaskCost.from_dict(r["cost"]) if "cost" in r else None,
                 # Restore the hash that was stored at emit time — do NOT let
                 # __post_init__ recompute it from the current receipt bytes.
                 stored_receipt_hash=r["receipt_hash"],

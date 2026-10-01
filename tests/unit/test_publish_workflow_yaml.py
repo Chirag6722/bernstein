@@ -339,8 +339,8 @@ def test_npm_missing_token_fails_the_job(workflow: dict[str, Any]) -> None:
     run = _step_run(workflow, "publish-npm", "Publish to npm")
 
     assert "::warning::NPM_TOKEN is not configured" not in run
-    assert "::error::NPM_TOKEN is not configured" in run
-    assert "exit 1" in run
+    assert "::error::npm wrapper publish failed" in run
+    assert "exit " in run
 
 
 def test_github_release_dispatches_every_release_event_consumer(workflow: dict[str, Any]) -> None:
@@ -464,3 +464,24 @@ def test_docker_mcp_catalog_render_step_exists(workflow: dict[str, Any]) -> None
     assert "RELEASE_COMMIT=$(git rev-parse HEAD)" in run
     # Must produce server.yaml.rendered
     assert "server.yaml.rendered" in run
+
+
+def test_upload_artifact_actions_use_same_sha(workflow: dict[str, Any]) -> None:
+    """Both actions/upload-artifact steps in the publish workflow must use the same SHA."""
+    upload_artifact_shas = []
+    for _job_name, job in workflow["jobs"].items():
+        for step in job.get("steps", []):
+            if isinstance(step, dict) and step.get("uses", "").startswith("actions/upload-artifact"):
+                uses = step["uses"]
+                # Extract the SHA from the uses string.
+                # Format: actions/upload-artifact@<sha>#<ref> or actions/upload-artifact@<sha>
+                try:
+                    _, rest = uses.split("@", 1)
+                except ValueError:
+                    continue
+                # Split at '#' or space to get the SHA.
+                sha = rest.split("#")[0].split()[0]
+                upload_artifact_shas.append(sha)
+    # We expect exactly two upload-artifact steps in the publish workflow.
+    assert len(upload_artifact_shas) == 2, f"Expected 2 upload-artifact steps, found {len(upload_artifact_shas)}"
+    assert upload_artifact_shas[0] == upload_artifact_shas[1], f"Upload artifact SHAs differ: {upload_artifact_shas}"

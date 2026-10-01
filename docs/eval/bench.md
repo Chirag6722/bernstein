@@ -60,6 +60,19 @@ bernstein bench run <suite>
 | No fabrication | Flipping a verdict without a matching receipt fails verification at the diverging task |
 | No missing receipts | An empty/absent receipt fails the entire bundle |
 | Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
+| Attributable | The bundle carries a detached Ed25519 JWS over its hash, made with the install identity. `bench verify` checks it against a key you supply with `--trusted-key FINGERPRINT=PATH` |
+
+Every hash above can be recomputed by whoever rebuilt the bundle, so they answer
+"is this internally consistent", not "who produced it". The signature is the only
+part that needs a key, which is why it is checked first and why a bundle whose
+fingerprint resolves to no trusted key is reported `UNSIGNED` rather than assumed
+good.
+
+The stub signer (`--stub-signer` on both `run` and `verify`) uses a key that is a
+public constant in `bernstein/eval/bench/signer.py`. A stub-signed bundle proves
+nothing about its origin, so `bench verify` refuses one unless you say that is
+what you are verifying. `--no-signature` skips the check entirely for a replay-only
+run.
 
 ---
 
@@ -213,6 +226,43 @@ all `k` per-attempt run receipts embedded so the floor is recomputable
 offline. `bernstein eval --reliability k` is a thin alias for the same
 run path — identical receipt, verified with the same two verbs above.
 Full details: [reliability.md](reliability.md).
+
+---
+
+## Cost per verdict
+
+A bundle reports verdicts. Until now it reported nothing about what producing
+them cost, so two bundles could be compared on score and not on money.
+
+Each task result may carry a `cost` block — `tokens`, `cost_usd`, `wall_time_s`
+— and the bundle derives `total_cost`, `measured_tasks` and `cost_per_verdict`
+from the rows.
+
+| Field | Meaning |
+|---|---|
+| `cost` (per task) | what that one verdict cost. **Absent** when the run did not measure it |
+| `total_cost` | the sum over tasks that *were* measured |
+| `measured_tasks` | how many that was, so a total is never read as the whole suite |
+| `cost_per_verdict` | `total_cost.cost_usd / measured_tasks` |
+
+**Absent, not zero.** A run that did not measure its cost and a run that was
+free are different facts, and `$0.00` reads as the second. An unmeasured cost
+is omitted from the JSON entirely, and the derived fields are `None`.
+
+That omission is also what keeps older bundles readable. `SubmissionBundle.load`
+recomputes `bundle_hash` over a payload that includes every task result, and
+refuses a mismatch as tampering — so a `"cost": null` written unconditionally
+would have made every bundle produced before this change fail to load.
+
+**Measured costs are sealed.** Once recorded, `cost` is part of the hash the
+signature commits to, so editing a cost after signing is caught on load. The
+derived totals are *not* hashed — they are read off the rows, the same way
+`pass_rate` is, so a bundle can never disagree with itself about its own cost.
+
+`bernstein bench compare` prints cost beside the score, with deltas always
+expressed as B relative to A (the argument order, not the ranked order — a sign
+that flipped with the ranking would be unusable), and says so explicitly when
+one of the bundles has no cost recorded rather than printing nothing.
 
 ---
 

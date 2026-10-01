@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 import click
 
 if TYPE_CHECKING:
+    from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.suite import BenchSuite
 
 # ---------------------------------------------------------------------------
@@ -201,12 +202,42 @@ def bench_run(
 @bench_group.command(name="verify")
 @click.argument("bundle")
 @click.option("--suite", default="golden-v1", show_default=True, help="Suite to verify against.")
-def bench_verify(bundle: str, suite: str) -> None:
+@click.option(
+    "--trusted-key",
+    "trusted_keys",
+    multiple=True,
+    metavar="FINGERPRINT=PATH",
+    help="A signer fingerprint and the SPKI PEM file that verifies it. Repeatable.",
+)
+@click.option(
+    "--stub-signer",
+    is_flag=True,
+    default=False,
+    help="Accept a bundle signed with the PUBLIC stub key. Proves nothing about origin; for testing.",
+)
+@click.option(
+    "--no-signature",
+    is_flag=True,
+    default=False,
+    help="Skip the signature check. Replay still runs; the bundle's origin is then unattested.",
+)
+def bench_verify(
+    bundle: str,
+    suite: str,
+    trusted_keys: tuple[str, ...],
+    stub_signer: bool,
+    no_signature: bool,
+) -> None:
     """Verify a bundle by replaying every task receipt offline.
 
     BUNDLE is the path to a submission bundle .json file.
 
-    Exits 0 on MATCH, 1 on any divergence or fabricated score.
+    The signature is checked FIRST, because it is the only part of a bundle a forger cannot
+    reproduce: every hash in one can be recomputed by whoever rebuilt it. Supply the signer's
+    public key with --trusted-key FINGERPRINT=PATH; without one, an install-identity signature
+    cannot be resolved and the bundle is reported UNSIGNED rather than assumed good.
+
+    Exits 0 on MATCH, 1 on any divergence, fabricated score, or unverifiable signature.
     """
     from bernstein.eval.bench.bundle import SubmissionBundle
     from bernstein.eval.bench.runner import MockReplayAdapter, ReplayAdapter
@@ -227,7 +258,23 @@ def bench_verify(bundle: str, suite: str) -> None:
         adapter = ToolSurfaceReplayAdapter()
     else:
         adapter = MockReplayAdapter()
-    verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
+    keys: dict[str, bytes] = {}
+    for entry in trusted_keys:
+        fingerprint, sep, key_path = entry.partition("=")
+        if not sep or not fingerprint or not key_path:
+            raise click.ClickException(f"--trusted-key expects FINGERPRINT=PATH, got {entry!r}")
+        pem = Path(key_path)
+        if not pem.exists():
+            raise click.ClickException(f"Trusted key file not found: {pem}")
+        keys[fingerprint] = pem.read_bytes()
+
+    verifier = BenchVerifier(
+        suite=suite_obj,
+        adapter=adapter,
+        trusted_keys=keys,
+        allow_stub_signature=stub_signer,
+        require_signature=not no_signature,
+    )
     result = verifier.verify(bundle_obj)
 
     click.echo(result.report())
@@ -361,21 +408,56 @@ def bench_compare(a: str, b: str, allow_harness_drift: bool, output_format: str)
             f"resolve rate {bundle.pass_rate * 100:.1f}%, "
             f"expected value {ev:.3f}"
         )
-    # Resource deltas (#5464), b relative to a. Printed only when either
-    # bundle recorded any, so a pre-#5464 pair reads exactly as before.
-    if any(r.has_resource_metrics() for r in (*bundle_a.task_results, *bundle_b.task_results)):
+    _echo_cost_delta(path_a, bundle_a, path_b, bundle_b)
+    if report.refused_a or report.refused_b:
+        click.echo(f"  refused : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
+
+
+def _echo_cost_delta(
+    path_a: Path,
+    bundle_a: SubmissionBundle,
+    path_b: Path,
+    bundle_b: SubmissionBundle,
+) -> None:
+    """Print cost beside the score delta, or say why it cannot be compared.
+
+    Silence would be the wrong answer for an unmeasured bundle: the reader is
+    comparing two runs on cost, and nothing printed reads as "no difference"
+    rather than "not recorded" (#5464).
+
+    Deltas are always b-relative-to-a, matching the argument order rather than
+    the ranked order above - a sign that flips depending on which bundle won is
+    a number nobody can act on.
+    """
+    cost_a, cost_b = bundle_a.total_cost, bundle_b.total_cost
+    if cost_a is None or cost_b is None:
+        unmeasured = [p.name for p, c in ((path_a, cost_a), (path_b, cost_b)) if c is None]
         click.echo("")
-        click.echo(
-            f"Cost     : ${report.cost_a_usd:.4f} -> ${report.cost_b_usd:.4f} "
-            f"({report.cost_delta_usd:+.4f}, {report.cost_delta_percent_text()})"
+        click.echo(f"Cost: not recorded in {', '.join(unmeasured)} — no cost comparison available.")
+        return
+
+    click.echo("")
+    click.echo(
+        f"Cost: {path_a.name} ${cost_a.cost_usd:.4f} over {bundle_a.measured_tasks} measured tasks, "
+        f"{path_b.name} ${cost_b.cost_usd:.4f} over {bundle_b.measured_tasks}."
+    )
+    for label, a_value, b_value, fmt in (
+        ("cost", cost_a.cost_usd, cost_b.cost_usd, "$.4f"),
+        ("tokens", float(cost_a.tokens), float(cost_b.tokens), ".0f"),
+        ("wall time", cost_a.wall_time_s, cost_b.wall_time_s, ".1fs"),
+    ):
+        delta = b_value - a_value
+        sign = "+" if delta >= 0 else "-"
+        magnitude = abs(delta)
+        rendered = (
+            f"${magnitude:.4f}" if fmt == "$.4f" else (f"{magnitude:.0f}" if fmt == ".0f" else f"{magnitude:.1f}s")
         )
-        click.echo(f"Tokens   : {report.tokens_a:,} -> {report.tokens_b:,} ({report.tokens_delta:+,})")
-        click.echo(
-            f"Duration : {report.duration_a_seconds:.2f}s -> {report.duration_b_seconds:.2f}s "
-            f"({report.duration_delta_seconds:+.2f}s)"
-        )
-        if report.refused_a or report.refused_b:
-            click.echo(f"Refused  : {report.refused_a} -> {report.refused_b} tasks never ran (budget)")
+        click.echo(f"  {label} delta ({path_b.name} vs {path_a.name}): {sign}{rendered}")
+
+    per_a, per_b = bundle_a.cost_per_verdict, bundle_b.cost_per_verdict
+    if per_a is not None and per_b is not None:
+        click.echo(f"  cost per verdict: ${per_a:.4f} vs ${per_b:.4f}")
+>>>>>>> upstream/main
 
 
 # ---------------------------------------------------------------------------
