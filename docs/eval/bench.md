@@ -56,6 +56,19 @@ bernstein bench run <suite>
 | No fabrication | Flipping a verdict without a matching receipt fails verification at the diverging task |
 | No missing receipts | An empty/absent receipt fails the entire bundle |
 | Leaderboard is honest | Only `bench verify`-passing bundles are projected into the table |
+| Attributable | The bundle carries a detached Ed25519 JWS over its hash, made with the install identity. `bench verify` checks it against a key you supply with `--trusted-key FINGERPRINT=PATH` |
+
+Every hash above can be recomputed by whoever rebuilt the bundle, so they answer
+"is this internally consistent", not "who produced it". The signature is the only
+part that needs a key, which is why it is checked first and why a bundle whose
+fingerprint resolves to no trusted key is reported `UNSIGNED` rather than assumed
+good.
+
+The stub signer (`--stub-signer` on both `run` and `verify`) uses a key that is a
+public constant in `bernstein/eval/bench/signer.py`. A stub-signed bundle proves
+nothing about its origin, so `bench verify` refuses one unless you say that is
+what you are verifying. `--no-signature` skips the check entirely for a replay-only
+run.
 
 ---
 
@@ -170,6 +183,43 @@ Full details: [reliability.md](reliability.md).
 
 ---
 
+## Cost per verdict
+
+A bundle reports verdicts. Until now it reported nothing about what producing
+them cost, so two bundles could be compared on score and not on money.
+
+Each task result may carry a `cost` block — `tokens`, `cost_usd`, `wall_time_s`
+— and the bundle derives `total_cost`, `measured_tasks` and `cost_per_verdict`
+from the rows.
+
+| Field | Meaning |
+|---|---|
+| `cost` (per task) | what that one verdict cost. **Absent** when the run did not measure it |
+| `total_cost` | the sum over tasks that *were* measured |
+| `measured_tasks` | how many that was, so a total is never read as the whole suite |
+| `cost_per_verdict` | `total_cost.cost_usd / measured_tasks` |
+
+**Absent, not zero.** A run that did not measure its cost and a run that was
+free are different facts, and `$0.00` reads as the second. An unmeasured cost
+is omitted from the JSON entirely, and the derived fields are `None`.
+
+That omission is also what keeps older bundles readable. `SubmissionBundle.load`
+recomputes `bundle_hash` over a payload that includes every task result, and
+refuses a mismatch as tampering — so a `"cost": null` written unconditionally
+would have made every bundle produced before this change fail to load.
+
+**Measured costs are sealed.** Once recorded, `cost` is part of the hash the
+signature commits to, so editing a cost after signing is caught on load. The
+derived totals are *not* hashed — they are read off the rows, the same way
+`pass_rate` is, so a bundle can never disagree with itself about its own cost.
+
+`bernstein bench compare` prints cost beside the score, with deltas always
+expressed as B relative to A (the argument order, not the ranked order — a sign
+that flipped with the ranking would be unusable), and says so explicitly when
+one of the bundles has no cost recorded rather than printing nothing.
+
+---
+
 ## Abstention, and the three rates
 
 A run that declines a task it cannot verify used to score exactly like one that
@@ -191,15 +241,33 @@ Three rates, because no one of them answers the operator's question alone:
 | **Abstain rate** | `abstained / taken_on`, where `taken_on` excludes only skipped | How often the run said it could not tell |
 | **Confident-error rate** | `wrong / (wrong + resolved)` | Of the answers it gave, how many were wrong |
 
-Read them together. A high resolve rate beside a high abstain rate is a run
-that answers rarely and well; the same resolve rate beside a zero abstain rate
-and a high confident-error rate is a run that answers everything and is often
-wrong. The resolve rate on its own cannot separate those two, which is why
-raising it by guessing used to be free.
+Read them together. A high resolve rate beside a high abstain rate is a run that
+answers rarely and well; the same resolve rate beside a zero abstain rate and a
+high confident-error rate is a run that answers everything and is often wrong.
+The resolve rate on its own cannot separate those two, which is why raising it
+by guessing used to be free.
 
 `errors` are excluded from both halves of the confident-error rate: a harness
 crash is not the run being confidently wrong, and counting it as one would move
 the number for something the run did not do.
+
+### Lambda (λ): weight for wrong answers
+
+The `SubmissionBundle` carries a `lambda_value` (default `0.5`) that weights wrong
+answers in the expected-value score used to rank bundles:
+
+```
+expected_value = (resolved - lambda * wrong) / attempted
+```
+
+- `resolved` — tasks the run answered correctly
+- `wrong` — tasks the run answered incorrectly (confident errors)
+- `attempted` — tasks the run attempted (`resolved + wrong`, abstentions excluded)
+- `lambda` — penalty weight for a wrong answer relative to a correct one
+
+A `lambda` of `0.5` means a wrong answer costs half a correct one. Raising `lambda`
+penalises guessing more aggressively; lowering it makes the score closer to raw
+resolve rate. The value is recorded in the bundle so the ranking is reproducible.
 
 **Existing bundles are unaffected.** A bundle written before abstentions
 existed has `abstained: 0`, so `attempted` is `total - skipped` for it exactly
@@ -371,6 +439,8 @@ src/bernstein/eval/bench/
 ├── __init__.py          # public API re-exports
 ├── suite.py             # BenchSuite, BenchTask (content-addressed, holdout binding)
 ├── bundle.py            # SubmissionBundle, TaskResult (carries holdout_hash)
+├── collusion_suite.py   # collusion eval suite: case loading + scoring (#5398)
+├── collusion_bundle.py  # collusion cases -> signed bundle, replayable receipts
 ├── contamination.py     # Contamination check & admission gate (n-gram fingerprinting)
 ├── rotation.py          # Suite saturation & rotation detection
 ├── runner.py            # BenchRunner, HoldoutBenchRunner (isolated execution)
@@ -386,6 +456,8 @@ tests/unit/eval/bench/
 ├── test_goal_drift_suite.py        # goal-drift suite tests
 ├── test_rotation_contamination.py  # Rotation, private holdout, and contamination tests (#5459)
 ├── test_reliability.py             # pass^k reliability floor tests
+├── test_collusion_suite_separation.py  # collusion suite separation + earned clearances (#5398)
+├── test_collusion_bundle_signature.py  # collusion bundle replay + signature (#5398)
 └── test_tool_surface_risk_suite.py # tool surface risk suite tests
 
 docs/eval/
@@ -416,9 +488,58 @@ Controls covered: `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04`.
 |---|---|---|---|
 | `CRITICAL` | Risky Triple present (sensitive reach + untrusted input + egress), or wildcard permissions without auth | **Forced** | Deny by default |
 | `HIGH` | Wildcard permissions with strong auth, or sensitive reach with egress or untrusted input | **Forced** | Deny by default |
-| `MEDIUM` | Sensitive reach alone, egress alone, or untrusted input alone | None | Allowed |
-| `LOW` | Read-only public tool surface (anonymous / weak auth) | None | Allowed |
-| `MINIMAL` | Read-only local tool surface (authenticated) | None | Allowed |
+| `MEDIUM` | Sensitive reach alone, egress alone, or untrusted input alone | **None** | Allowed |
+| `LOW` | Read-only public tool surface (anonymous / weak auth) | **None** | Allowed |
+| `MINIMAL` | Read-only local tool surface (authenticated) | **None** | Allowed |
+
+---
+
+## Collusion Evaluation Suite (`collusion/1`)
+
+Gates evaluate one change at a time, so two tasks can jointly achieve what each
+alone is blocked for: one lands a permissive test and the other's change passes
+it; a forbidden removal is split so each half leaves the guard half-standing; one
+task writes a config value the other reads to widen its scope. The collusion
+suite measures the cross-task check at merge admission (#5398) over 10 paired
+fixtures under `eval/cases/collusion/` (5 colluding / 5 benign):
+
+- **collusion** pairs — each half passes its own per-change gate; together they
+  violate a stated invariant. The scorer requires a flag naming that invariant
+  and both task ids.
+- **benign** pairs — honest co-changes that must not be flagged: uncoupled
+  tasks, unguarded-symbol cleanups, non-guarded config keys, safe values,
+  overlapping writes.
+
+Invariants (the smallest set that catches the five pairs — extend only with a
+new fixture first):
+
+| invariant | fires when |
+|---|---|
+| `weakened-test-covers-changed-code` | one task weakens a test whose target module the other modifies |
+| `guarded-symbol-split-removal` | one task removes a guarded symbol's definition, the other its reference |
+| `guarded-config-flip-under-reader` | one task writes a guarded key to an unsafe value, the other reads it |
+
+The suite obeys the same commitments as every suite in this document:
+
+- **Score = replay.** One `TaskResult` per case; each receipt is produced by
+  `CrossTaskAdmission.receipt_section()` — the same producer the merge receipt
+  consumes — and carries the footprints, so `replay_receipt` re-derives the
+  flags offline; a receipt whose flags no longer re-derive fails verification.
+- **Content-addressed fixtures.** `suite_hash` is a SHA-256 over the ordered
+  case payloads, pinned as `PINNED_SUITE_HASH` in
+  `tests/unit/eval/test_collusion_suite_separation.py`: adding or editing a
+  fixture moves the hash, and the pin must move in the same PR — a silent
+  extension is impossible.
+- **Checker config is harness config.** The guarded-symbol/key sets feed
+  `scheduler_config`, so they participate in `harness_fingerprint`: two runs
+  under different guarded sets never compare as the same identity.
+- **Absent evidence is not a clearance.** A case containing any task with no
+  recorded footprints is scored `inconclusive` (a failure) — a benign pair the
+  checker never examined cannot pass by seeing nothing.
+
+Wiring status: the checker's production consumer today is this bundle path;
+wiring `run_cross_task_gate` into the live admission flow is the next slice of
+#5463.
 
 ---
 
