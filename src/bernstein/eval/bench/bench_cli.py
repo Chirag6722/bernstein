@@ -19,6 +19,7 @@ Also registered as a standalone script in pyproject.toml:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -100,7 +101,36 @@ def bench_group() -> None:
         "pass^k reliability receipt instead of a submission bundle."
     ),
 )
-def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliability_k: int | None) -> None:
+@click.option(
+    "--trajectory",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to trajectory JSON file (events and diff).",
+)
+@click.option(
+    "--diff",
+    "diff_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to git diff file for goal-drift suite.",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Drift threshold tolerance for goal-drift suite.",
+)
+def bench_run(
+    suite: str,
+    out: str,
+    scheduler: str,
+    stub_signer: bool,
+    reliability_k: int | None,
+    trajectory: Path | None = None,
+    diff_file: Path | None = None,
+    threshold: float = 0.0,
+) -> None:
     """Execute a suite and emit a signed submission bundle.
 
     SUITE is a built-in suite name (e.g. golden-v1) or a path to a .json
@@ -132,13 +162,26 @@ def bench_run(suite: str, out: str, scheduler: str, stub_signer: bool, reliabili
     elif suite_obj.version == "goal-drift-v1":
         from bernstein.eval.bench.goal_drift_suite import GoalDriftReplayAdapter
 
-        adapter = GoalDriftReplayAdapter()
+        trajectory_data = None
+        if trajectory is not None:
+            with open(trajectory, encoding="utf-8") as f:
+                trajectory_data = json.load(f)
+        diff_text = None
+        if diff_file is not None:
+            with open(diff_file, encoding="utf-8") as f:
+                diff_text = f.read()
+
+        adapter = GoalDriftReplayAdapter(
+            trajectory_data=trajectory_data,
+            diff_text=diff_text,
+            threshold=threshold,
+        )
     else:
         adapter = MockReplayAdapter()
     runner = BenchRunner(
         suite=suite_obj,
         adapter=adapter,
-        scheduler_config={"scheduler": scheduler},
+        scheduler_config={"scheduler": scheduler, "threshold": threshold},
     )
 
     click.echo("\nRunning tasks…")

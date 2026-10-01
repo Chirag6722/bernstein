@@ -398,7 +398,7 @@ docs/eval/
 
 ## Goal-Drift Suite (`goal-drift-v1`)
 
-The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). It measures scope compliance and forbidden changes per step deterministically from lineage events and diffs without model calls.
+The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically from lineage events and diffs without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
 
 Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 

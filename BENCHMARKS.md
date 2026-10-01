@@ -42,15 +42,15 @@ The server is classified as `CRITICAL` and **MUST force an approval gate**. If n
 The `goal-drift-v1` benchmark measures where and when long-running agent trajectories deviate from explicit task contracts (`DriftContract`).
 
 ### Drift Contract Parameters
-- **`scope_paths`**: Allowed files or directories. Any file touch outside this scope incurs an out-of-scope penalty.
-- **`required_behaviours`**: Mandatory behaviours or functions expected to be fulfilled.
-- **`forbidden_changes`**: Forbidden paths, dangerous methods, or planted scope creep.
+- **`scope_paths`**: Allowed repository-relative POSIX files or directories.
+- **`required_behaviours`**: Contractual behaviours expected to be fulfilled (reserved for behavior evidence assertions).
+- **`forbidden_changes`**: Forbidden files, paths, or identifier additions. Path-like rules match file touches; identifier-like rules match additions in diffs.
 - **`distraction_type` / `distraction_description`**: Planted distractions (TODO scope creep, tempting refactors, unrelated failing tests, stale docs, premature optimizations).
 
 ### Hard-Check Deterministic Metric
 Hard drift checks evaluate touched paths and generated diffs per execution step without calling any model:
 $$\text{Drift Score} \in [0.0, 1.0]$$
-A compliant trajectory scores strictly `0.0` at every step, yielding `max_hard_drift = 0.0`.
+A compliant trajectory scores strictly `0.0` at every step, yielding `max_hard_drift = 0.0`. Forbidden additions incur an immediate 1.0 hard violation without partial credit.
 
 ---
 
@@ -60,10 +60,13 @@ A compliant trajectory scores strictly `0.0` at every step, yielding `max_hard_d
 # Run the tool-surface benchmark suite
 bernstein bench run tool-surface-v1 --out tool-surface-bundle.json
 
+# Offline independent verification for tool-surface
+bernstein bench verify tool-surface-bundle.json --suite tool-surface-v1
+
 # Run the goal-drift benchmark suite
 bernstein bench run goal-drift-v1 --out goal-drift-bundle.json
 
-# Offline independent verification
+# Offline independent verification for goal-drift
 bernstein bench verify goal-drift-bundle.json --suite goal-drift-v1
 ```
 
