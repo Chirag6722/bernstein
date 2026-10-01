@@ -188,7 +188,7 @@ class TestGoalDriftEndToEndBundle:
             assert result.receipt["drift_curve"]["max_hard_drift"] == 0.0
 
         # Verify offline
-        verifier = BenchVerifier(suite=goal_drift_suite, adapter=adapter)
+        verifier = BenchVerifier(suite=goal_drift_suite, adapter=adapter, allow_stub_signature=True)
         verification = verifier.verify(bundle)
         assert verification.status == VerificationStatus.MATCH
         assert verification.passed is True
@@ -410,7 +410,7 @@ class TestGoalDriftCLI:
         # Verify bundle
         verify_res = runner.invoke(
             bench_group,
-            ["verify", str(bundle_file), "--suite", "goal-drift-v1"],
+            ["verify", str(bundle_file), "--suite", "goal-drift-v1", "--stub-signer"],
         )
         assert verify_res.exit_code == 0, verify_res.output
         assert "MATCH" in verify_res.output
