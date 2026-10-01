@@ -452,7 +452,7 @@ Manifest shape:
 | `tests` | pytest's JUnit report with `failures > 0`. `errors > 0` with no failure is a collection or setup error — `tool_error`, a miss. |
 | `lint` | ruff's closing `Found N errors.` line. A ruff that could not start never prints one. |
 | `dead_code` | a vulture `path:line: unused …` line. |
-| anything else | the gate's `fail` verdict, recorded as `verdict_basis="unclassified_fail"` so the weaker basis is visible rather than assumed. No case in the shipped corpus reaches this today. |
+| anything else | treated as `caught=False`, `actual_verdict="inconclusive"`, `verdict_basis="unclassified_fail"`. A gate that returned `fail` without a declared signature cannot be verified as an actual catch. |
 
 Every result carries `verdict_basis`, so a reader can tell a positively identified finding from a verdict taken on the gate's word.
 

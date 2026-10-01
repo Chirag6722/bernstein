@@ -533,6 +533,35 @@ class TestOnlyAFindingCountsAsACatch:
         assert result.caught is True
         assert result.verdict_basis == "finding_signature"
 
+    def test_an_unsignatured_gate_failure_is_inconclusive_not_caught(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A gate without a declared finding signature returning fail is inconclusive, not caught."""
+        from bernstein.core.quality.gate_runner import GateResult
+
+        async def _mock_run_gate(*args: object, **kwargs: object) -> GateResult:
+            return GateResult(
+                name="large_file",
+                status="fail",
+                required=True,
+                blocked=False,
+                cached=False,
+                duration_ms=10,
+                details="Generic failure details without structured finding",
+            )
+
+        monkeypatch.setattr("bernstein.core.quality.gate_runner.GateRunner.run_gate", _mock_run_gate)
+
+        case = _write_case(
+            tmp_path,
+            "unsignatured_failure",
+            gate="large_file",
+            files={"large.bin": "x" * 100},
+        )
+        result = evaluate_with_gate_runner(case)
+        assert result.caught is False
+        assert result.actual_verdict == "inconclusive"
+        assert result.verdict_basis == "unclassified_fail"
+        assert "treated as inconclusive" in result.details
+
 
 class TestTheMeasuredCorpusIsPinned:
     """The catch rate, and the basis of every verdict in it."""

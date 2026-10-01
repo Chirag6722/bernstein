@@ -466,9 +466,11 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
                 caught, verdict, basis = False, "tool_error", "no_finding_signature"
                 note = f"the {gate} gate exited nonzero without emitting a finding"
         else:
-            # No signature declared for this gate, so the catch rests on the
-            # gate's own word. Named rather than hidden.
-            caught, verdict, basis, note = True, "fail", "unclassified_fail", ""
+            # No finding signature or structured report declared for this gate,
+            # so a nonzero exit cannot be verified as an actual catch. Treat
+            # as inconclusive / uncaught rather than inflating the catch rate.
+            caught, verdict, basis = False, "inconclusive", "unclassified_fail"
+            note = f"the {gate} gate returned fail without a declared finding signature; treated as inconclusive"
 
         return GateEvasionResult(
             case_class=case.class_name,
@@ -502,8 +504,8 @@ class GateEvasionResult:
         verdict_basis: What ``caught`` was decided from. ``junit_failures``
             and ``finding_signature`` are positive identifications of a
             finding; ``unclassified_fail`` means the gate returned ``fail``
-            and this suite has no signature for it, so the catch is taken on
-            the gate's word. A gap that is named is one a reader can price.
+            without a declared finding signature or structured report, so the
+            result is treated as inconclusive / uncaught.
     """
 
     case_class: str
