@@ -14,6 +14,7 @@ from bernstein.compliance.controls import (
     ControlRegistry,
     get_default_registry,
 )
+from bernstein.compliance.cosai import control_map as cosai_control_map
 from bernstein.compliance.eu_ai_act import (
     AnnexIIIDomain,
     ClassificationResult,
@@ -67,6 +68,7 @@ __all__ = [
     "TechDocGenerator",
     "build_evidence_pack",
     "build_oscal_assessment_results",
+    "cosai_control_map",
     "export_oscal_assessment_results",
     "get_default_registry",
     "get_oscal_schema_path",
