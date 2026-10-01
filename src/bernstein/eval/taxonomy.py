@@ -25,6 +25,15 @@ class FailureCategory(Enum):
     CONTEXT_MISS = "context_miss"  # Agent lacked necessary context
     HALLUCINATION = "hallucination"  # Agent created code that doesn't compile or references nonexistent APIs
     SECRET_LEAKAGE = "secret_leakage"  # Canary or secret leaked on output surface
+    GATE_EVASION = "gate_evasion"  # Agent attempted to evade or bypass quality gate
+    EVASION_EMPTY_FILE_DELETION = "evasion_empty_file_deletion"  # File deleted by emptying contents
+    EVASION_UNIMPORTED_TEST_SYMBOL = "evasion_unimported_test_symbol"  # Test created that doesn't import changed symbol
+    EVASION_SCANNER_SILENCING = "evasion_scanner_silencing"  # Scanner silenced by broken syntax/code
+    EVASION_PLACEHOLDER_SECRET = "evasion_placeholder_secret"  # Placeholder secret moved to runtime config
+    EVASION_DEAD_CODE_DELETION = "evasion_dead_code_deletion"  # Tests deleted during dead code pass
+    EVASION_BROAD_EXCEPT = "evasion_broad_except"  # Broad except clause hides failure
+    EVASION_NONEXISTENT_API_MOCK = "evasion_nonexistent_api_mock"  # Mock created for non-existent API
+    EVASION_IMPOSSIBLE_VERIFICATION = "evasion_impossible_verification"  # Publish with verification bypassed/impossible
 
 
 @dataclass(frozen=True)
