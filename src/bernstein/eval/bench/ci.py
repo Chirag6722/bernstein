@@ -139,6 +139,19 @@ def evaluate_ci_scorecard(
     if problem is not None:
         return _neutral(bundle, problem, baseline_bundle)
 
+    from bernstein.eval.bench.signer import StubSigner
+
+    if baseline_bundle.signer_fingerprint != StubSigner.fingerprint():
+        # A non-stub fingerprint is present but nothing in the bench layer can
+        # verify it yet (#5856). A delta measured against an unverifiable
+        # baseline must not read as success.
+        return _neutral(
+            bundle,
+            f"Baseline signature by {baseline_bundle.signer_fingerprint} is present but cannot "
+            "be verified by bench (#5856); result is neutral.",
+            baseline_bundle,
+        )
+
     if verifier is None:
         return _neutral(
             bundle, "No verifier supplied, so the baseline was not re-verified. Result is neutral.", baseline_bundle
@@ -170,19 +183,6 @@ def evaluate_ci_scorecard(
     else:
         conclusion = "success"
         summary = f"Benchmark passed successfully with delta {pass_delta * 100:+.1f}% vs baseline."
-
-    from bernstein.eval.bench.signer import StubSigner
-
-    if baseline_bundle.signer_fingerprint != StubSigner.fingerprint():
-        # A non-stub fingerprint is present but nothing in the bench layer can
-        # verify it yet (#5856). A delta measured against an unverifiable
-        # baseline must not read as success.
-        return _neutral(
-            bundle,
-            f"Baseline signature by {baseline_bundle.signer_fingerprint} is present but cannot "
-            "be verified by bench (#5856); result is neutral.",
-            baseline_bundle,
-        )
 
     return BenchScorecard(
         suite_version=bundle.suite_version,

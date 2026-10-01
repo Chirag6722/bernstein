@@ -96,11 +96,19 @@ class TestSarifGeneration:
         )
 
     def test_sarif_semantic_version_is_the_tool_version_not_the_suite(self) -> None:
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            expected_ver = version("bernstein")
+        except PackageNotFoundError:
+            expected_ver = None
 
         bundle = _make_test_bundle(tasks=[{"id": "t", "passed": True}])
         driver = bundle_to_sarif(bundle)["runs"][0]["tool"]["driver"]
-        assert driver["semanticVersion"] == version("bernstein")
+        if expected_ver is not None:
+            assert driver["semanticVersion"] == expected_ver
+        else:
+            assert "semanticVersion" not in driver
         assert driver["properties"]["suiteVersion"] == "golden-v1"
 
     def test_sarif_does_not_default_semantic_version_to_zero(self) -> None:
@@ -182,7 +190,7 @@ class TestScorecardEvaluation:
     def test_scorecard_with_verified_baseline_success(self) -> None:
         suite = build_golden_suite_v1()
         adapter = MockReplayAdapter()
-        verifier = BenchVerifier(suite=suite, adapter=adapter)
+        verifier = BenchVerifier(suite=suite, adapter=adapter, allow_stub_signature=True)
 
         baseline_bundle = StubSigner().sign(BenchRunner(suite=suite, adapter=adapter, scheduler_config={}).run())
         curr_bundle = BenchRunner(suite=suite, adapter=adapter, scheduler_config={}).run()
@@ -223,7 +231,7 @@ class TestScorecardEvaluation:
             bundle=curr,
             suite=suite,
             baseline_bundle=StubSigner().sign(baseline),
-            verifier=BenchVerifier(suite=suite, adapter=MockReplayAdapter()),
+            verifier=BenchVerifier(suite=suite, adapter=MockReplayAdapter(), allow_stub_signature=True),
             regression_threshold=0.05,
         )
 

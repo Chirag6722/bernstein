@@ -319,7 +319,7 @@ def bench_run(
                     f"({type(exc).__name__}: {exc}). Result is neutral."
                 )
 
-        verifier = BenchVerifier(suite=suite_obj, adapter=adapter)
+        verifier = BenchVerifier(suite=suite_obj, adapter=adapter, allow_stub_signature=stub_signer)
         scorecard = evaluate_ci_scorecard(
             bundle=bundle,
             suite=suite_obj,
