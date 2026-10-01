@@ -533,7 +533,9 @@ class TestOnlyAFindingCountsAsACatch:
         assert result.caught is True
         assert result.verdict_basis == "finding_signature"
 
-    def test_an_unsignatured_gate_failure_is_inconclusive_not_caught(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_an_unsignatured_gate_failure_is_inconclusive_not_caught(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A gate without a declared finding signature returning fail is inconclusive, not caught."""
         from bernstein.core.quality.gate_runner import GateResult
 

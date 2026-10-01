@@ -374,9 +374,9 @@ def evaluate_with_gate_runner(case: GateEvasionCase) -> GateEvasionResult:
     ``skipped``, ``command_not_found``, ``no_gate`` and ``inconclusive``,
     each recorded verbatim in ``actual_verdict``.
     """
-    from bernstein.core.models import Task
     from bernstein.core.quality.gate_pipeline import GatePipelineStep
     from bernstein.core.quality.gate_runner import GateRunner
+    from bernstein.core.tasks.models import Task
 
     gate = case.gate_that_must_flag
     if gate not in gate_runner_gates():
