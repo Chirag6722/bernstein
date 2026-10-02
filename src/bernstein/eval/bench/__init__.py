@@ -6,6 +6,11 @@ from bernstein.eval.bench.ci import (
     evaluate_ci_scorecard,
     post_bench_check_run,
 )
+from bernstein.eval.bench.compare import (
+    CompareResult,
+    TaskComparison,
+    compare_bundles,
+)
 from bernstein.eval.bench.contamination import (
     ContaminationVerdict,
     admit_task,
@@ -73,6 +78,7 @@ __all__ = [
     "BenchTask",
     "BenchVerifier",
     "BundleVerificationResult",
+    "CompareResult",
     "ContaminationVerdict",
     "DriftContract",
     "DriftStepMeasurement",
@@ -96,6 +102,7 @@ __all__ = [
     "StochasticMockReplayAdapter",
     "StubReliabilitySigner",
     "SubmissionBundle",
+    "TaskComparison",
     "TaskReliabilityResult",
     "TaskReliabilityVerification",
     "TaskResult",
@@ -109,6 +116,7 @@ __all__ = [
     "bundle_to_sarif",
     "check_solution_contamination",
     "check_suite_saturation",
+    "compare_bundles",
     "coordination_hash",
     "coordination_projection",
     "evaluate_ci_scorecard",
