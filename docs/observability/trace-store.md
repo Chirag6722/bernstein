@@ -59,6 +59,7 @@ write boundary.
 | -------------------------------------- | ------------------------------------------------- |
 | `bernstein trace show <task-id>`       | Pretty-print the live JSONL trace for a task.     |
 | `bernstein trace <task-id>`            | Back-compat alias of `show`.                      |
+| `bernstein trace follow <entity-id>`   | Stream trace & ledger entries for an entity (`--since`, `--out`, `--live`). |
 | `bernstein trace serve --port 8765`    | Run the read-only viewer on `127.0.0.1`.          |
 | `bernstein trace verify <trace-id>`    | Confirm the on-disk bytes match the indexed hash. |
 | `bernstein trace reindex`              | Rebuild `index.jsonl` from the blob tree.         |
