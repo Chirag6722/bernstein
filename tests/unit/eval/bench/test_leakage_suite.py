@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -327,7 +328,9 @@ class TestReplayDerivesTheVerdictFromBytes:
     """
 
     @staticmethod
-    def _receipt(nonce: str = "replay_1", task_id: str = "leakage_bench_bundle") -> tuple[object, dict]:
+    def _receipt(
+        nonce: str = "replay_1", task_id: str = "leakage_bench_bundle"
+    ) -> tuple[LeakageReplayAdapter, dict[str, Any]]:
         suite = build_leakage_suite_v1()
         adapter = LeakageReplayAdapter(nonce=nonce)
         task = next(t for t in suite.tasks if t.id == task_id)
@@ -401,14 +404,17 @@ class TestReplayDerivesTheVerdictFromBytes:
 
         suite = build_leakage_suite_v1()
         submitter = LeakageReplayAdapter(nonce="submitter_nonce")
-        task = next(t for t in suite.tasks if t.id == "leakage_bench_bundle")
-        receipt = submitter.run_task(task, {})
+        task_results = []
+        for t in suite.tasks:
+            rc = submitter.run_task(t, {})
+            passed, score = submitter.score_task(t, rc)[:2]
+            task_results.append(
+                TaskResult(task_id=t.id, task_hash=t.content_hash(), receipt=rc, passed=passed, score=score)
+            )
         bundle = SubmissionBundle(
             suite_hash=suite.suite_hash,
             suite_version=suite.version,
-            task_results=[
-                TaskResult(task_id=task.id, task_hash=task.content_hash(), receipt=receipt, passed=False, score=0.0)
-            ],
+            task_results=task_results,
             scheduler_config={},
         )
         result = BenchVerifier(
