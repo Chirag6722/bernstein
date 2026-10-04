@@ -58,6 +58,12 @@ class InstanceResult:
     #: abstention is not one. Separate from `error_message`, which says the
     #: HARNESS broke; this says the run worked and declined to answer.
     abstention_reason: str = ""
+    #: The run's declared probability that its patch resolves the instance,
+    #: ∈ [0, 1]. Defaults to 1.0 (fully confident) so results written before
+    #: this field existed deserialise unchanged. Used by Brier-calibration
+    #: scoring (#5923): ``mean((confidence - outcome)**2)`` over evaluated
+    #: instances.
+    confidence: float = 1.0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -65,9 +71,12 @@ class InstanceResult:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> InstanceResult:
         payload = dict(data)
-        traces = [AgentTrace(**t) for t in payload.pop("agent_traces", [])]  # type: ignore[arg-type]
+        raw_traces = payload.pop("agent_traces", [])
+        traces = [AgentTrace(**t) for t in raw_traces] if isinstance(raw_traces, list) else []  # type: ignore[arg-type]
         # Results written before #5567 have no abstention field.
         payload.setdefault("abstention_reason", "")
+        # Results written before #5923 have no confidence field.
+        payload.setdefault("confidence", 1.0)
         return cls(**payload, agent_traces=traces)  # type: ignore[arg-type]
 
 
@@ -96,6 +105,18 @@ class ScenarioSummary:
     #: because a run can raise its resolve rate by guessing and this rate is what
     #: that costs.
     confident_error_rate: float = 0.0
+    #: Weight of a wrong answer in :attr:`expected_value`:
+    #: ``EV = (resolved - lambda * wrong) / attempted``. Operator-set risk appetite;
+    #: higher lambda penalises confident wrong answers more heavily (#5923).
+    lambda_penalty: float = 0.5
+    #: ``(resolved - lambda_penalty * wrong) / attempted`` -- a single scalar
+    #: reward that lets one run be ranked against another under a stated risk
+    #: appetite. The three rates describe behaviour; this ranks it.
+    expected_value: float = 0.0
+    #: ``mean((confidence - outcome)**2)`` over evaluated instances (not skipped,
+    #: not abstained, not errored). Measures how well the declared
+    #: :pyattr:`InstanceResult.confidence` predicts the actual outcome.
+    brier_score: float = 0.0
     verified: bool = False
     source_type: SummarySourceType = "mock"
     dataset: str = "princeton-nlp/SWE-bench_Lite"
@@ -142,6 +163,10 @@ class ScenarioSummary:
         payload.setdefault("abstained", 0)
         payload.setdefault("abstain_rate", 0.0)
         payload.setdefault("confident_error_rate", 0.0)
+        # A summary written before #5923 has no EV/Brier fields.
+        payload.setdefault("lambda_penalty", 0.5)
+        payload.setdefault("expected_value", 0.0)
+        payload.setdefault("brier_score", 0.0)
         payload.setdefault("verified", False)
         payload.setdefault("source_type", "mock")
         payload.setdefault("dataset", "princeton-nlp/SWE-bench_Lite")
@@ -215,6 +240,24 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         else 0.0
     )
 
+    # -- Expected value (#5923) ------------------------------------------------
+    # EV = (resolved - lambda * wrong) / attempted. `wrong` is `failed`: a
+    # harness error is not the run being confidently wrong, and counting it as
+    # one would move EV for something the run did not cause. Same exclusion
+    # rule as `confident_error_rate` above.
+    lambda_penalty = 0.5
+    expected_value = (resolved - lambda_penalty * failed) / attempted if attempted > 0 else 0.0
+
+    # -- Brier calibration score (#5923) ---------------------------------------
+    # mean((confidence - outcome)^2) over evaluated instances. Evaluated means
+    # the run made a prediction: not skipped, not abstained, not a harness error.
+    # `outcome` is 1 when resolved, 0 otherwise.
+    evaluated = [r for r in results if r.status not in ("skipped", "error", "abstained")]
+    if evaluated:
+        brier_score = statistics.mean((r.confidence - (1.0 if r.resolved else 0.0)) ** 2 for r in evaluated)
+    else:
+        brier_score = 0.0
+
     return ScenarioSummary(
         scenario_name=scenario_name,
         total_instances=total,
@@ -226,6 +269,9 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         abstained=abstained,
         abstain_rate=abstain_rate,
         confident_error_rate=confident_error_rate,
+        lambda_penalty=lambda_penalty,
+        expected_value=expected_value,
+        brier_score=brier_score,
         mean_wall_time_s=mean_wall,
         median_wall_time_s=median_wall,
         total_cost_usd=total_cost,
