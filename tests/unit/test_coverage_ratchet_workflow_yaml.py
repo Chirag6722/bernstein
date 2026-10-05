@@ -254,13 +254,64 @@ def _checkout_step(steps: list[dict]) -> dict:
     raise AssertionError("coverage-ratchet.yml no longer checks out the repo")
 
 
-def test_checkout_pins_the_measured_commit(steps: list[dict]) -> None:
-    """Neither `main` nor `github.sha` is the commit CI measured.
+def _bootstrap_step(steps: list[dict]) -> dict:
+    for step in steps:
+        if "./.github/actions/bootstrap" in str(step.get("uses", "")):
+            return step
+    raise AssertionError("coverage-ratchet.yml no longer calls bootstrap action")
 
-    `main` has usually moved on, and on a workflow_run event `github.sha`
-    is the default-branch head rather than the triggering run's commit.
+
+def _verify_step(steps: list[dict]) -> dict:
+    for step in steps:
+        run_cmd = step.get("run", "")
+        if "git merge-base --is-ancestor" in run_cmd:
+            return step
+    raise AssertionError("coverage-ratchet.yml lacks a commit verification step")
+
+
+def test_checkout_uses_trusted_ref_without_event_interpolation(steps: list[dict]) -> None:
+    """The checkout step must use a trusted ref without interpolating event parameters.
+
+    OpenSSF Scorecard Dangerous-Workflow triggers when untrusted event variables
+    like `github.event.workflow_run.head_sha` are passed directly into `actions/checkout`.
     """
-    assert _checkout_step(steps)["with"]["ref"] == "${{ github.event.workflow_run.head_sha }}"
+    checkout = _checkout_step(steps)
+    checkout_with = checkout.get("with", {})
+
+    for key, val in checkout_with.items():
+        assert "github.event" not in str(val), (
+            f"checkout step parameter {key!r} contains event interpolation {val!r}, "
+            "which causes Scorecard Dangerous-Workflow check to fail"
+        )
+
+    assert checkout_with.get("ref") == "main", "checkout step must use trusted literal ref 'main'"
+
+
+def test_commit_verification_and_detached_checkout_step(steps: list[dict]) -> None:
+    """Runtime verification step must validate 40-hex SHA, check ancestry, and perform detached checkout."""
+    checkout = _checkout_step(steps)
+    verify = _verify_step(steps)
+    bootstrap = _bootstrap_step(steps)
+
+    checkout_idx = steps.index(checkout)
+    verify_idx = steps.index(verify)
+    bootstrap_idx = steps.index(bootstrap)
+
+    assert checkout_idx < verify_idx < bootstrap_idx, (
+        "verification step must run immediately after actions/checkout and before bootstrap"
+    )
+
+    env = verify.get("env", {})
+    assert env.get("TARGET_SHA") == "${{ github.event.workflow_run.head_sha }}"
+
+    run_script = verify.get("run", "")
+    assert "^[0-9a-f]{40}$" in run_script, "verification script must validate that SHA matches 40 hex characters"
+    assert 'git merge-base --is-ancestor "$TARGET_SHA" origin/main' in run_script, (
+        "verification script must check ancestry against origin/main"
+    )
+    assert 'git -c advice.detachedHead=false checkout "$TARGET_SHA"' in run_script, (
+        "verification script must perform detached checkout of verified TARGET_SHA"
+    )
 
 
 def test_run_resolution_targets_the_triggering_run(steps: list[dict]) -> None:

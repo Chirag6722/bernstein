@@ -145,11 +145,12 @@ Prevents backsliding: total coverage may only hold or rise.
 Flow (`.github/workflows/coverage-ratchet.yml`, triggered when a **CI run
 on `main` completes** - `workflow_run`, any conclusion):
 
-1. Take the `coverage-report` from the CI run that just finished, and
-   check out the commit that run measured
-   (`github.event.workflow_run.head_sha`). Because the run has completed,
-   the artifact either exists now or never will - there is nothing to wait
-   for. See
+1. Take the `coverage-report` from the CI run that just finished, check out
+   the trusted `main` ref, verify that the measured commit
+   (`github.event.workflow_run.head_sha`) is a 40-hex SHA reachable from
+   `origin/main`, and perform a detached checkout of that commit. Because
+   the run has completed, the artifact either exists now or never will -
+   there is nothing to wait for. See
    [Which run supplies the measurement](#which-run-supplies-the-measurement).
 2. `scripts/coverage_ratchet.py check` parses the root `line-rate` and
    compares it to `total_coverage_percent`:

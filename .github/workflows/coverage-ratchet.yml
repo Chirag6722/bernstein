@@ -69,14 +69,14 @@ name: Coverage ratchet (total)
 # the default branch, so edits here take effect only once merged to main.
 
 # Safety note (zizmor dangerous-triggers, Scorecard Dangerous-Workflow).
-# This job runs privileged (`contents: write`) and checks out a commit
-# named by the event, which is the shape of a pwn request. What keeps it
-# safe is the job-level guard below, not the `branches:` filter: a fork's
-# branch can also be called `main`, so that filter alone is not a trust
-# boundary. The guard requires the triggering run to come from THIS
-# repository and from a `push` event, so the checked-out commit is
-# always one that already reached our default branch through the merge
-# queue. There is no reachable path here that builds fork-authored code.
+# This job runs privileged (`contents: write`). What keeps it safe is the
+# combination of the job-level guard below and runtime SHA verification:
+# the guard requires the triggering run to come from THIS repository and
+# from a `push` event, so the checked-out commit is always one that already
+# reached our default branch through the merge queue. The checkout uses the
+# trusted `main` ref, and a runtime verification step confirms the measured
+# SHA is a 40-hex SHA reachable from origin/main before performing a detached
+# checkout. There is no reachable path here that builds fork-authored code.
 on:  # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["CI"]
@@ -122,16 +122,39 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Scorecard dangerous-workflow note: this checkout uses the trusted
+      # `main` branch ref, NOT the event-supplied head_sha. The job-level `if:`
+      # guard requires the triggering run to belong to THIS repository and to be
+      # a `push`, so the measured commit SHA is always reachable from origin/main
+      # at runtime. We then `git checkout` that SHA after explicitly verifying it is
+      # reachable from the freshly-fetched main ref, which gives Scorecard an
+      # attacker-controlled-input-free entrypoint while preserving the
+      # "operate on the measured commit" semantic.
+      - name: Checkout main (trusted ref)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # The commit the triggering CI run measured - NOT `main`, which
-          # has usually moved on by now, and not `github.sha`, which on a
-          # workflow_run event is the default-branch head rather than the
-          # measured commit. The tree we check out and the tree CI measured
-          # must be the same commit.
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0
           persist-credentials: false
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify and pin to measured commit
+        env:
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # Guard rails: refuse anything that doesn't look like a full SHA
+          # (so the env var cannot smuggle a shell expression).
+          if ! echo "$TARGET_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::head_sha '$TARGET_SHA' is not a 40-hex SHA"
+            exit 1
+          fi
+          # Confirm the SHA is an ancestor of origin/main; this rejects any
+          # fork-controlled SHA that slipped past the event-filter guards.
+          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+            echo "::error::head_sha '$TARGET_SHA' is not reachable from origin/main"
+            exit 1
+          fi
+          git -c advice.detachedHead=false checkout "$TARGET_SHA"
 
       - uses: ./.github/actions/bootstrap
 
