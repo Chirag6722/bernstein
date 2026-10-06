@@ -9,7 +9,7 @@ This document records the canonical benchmark suites provided by `bernstein.eval
 | `golden-v1` | Core orchestrator determinism and task execution suite | — | 5 tasks | 1.0 (100%) |
 | `tool-surface-v1` | Tool-surface risk scoring, risky triple detection, and forced approval gating | `CTRL-TOOL-INVENTORY`, `ASI02`, `AST04` | 10 fixtures | 1.0 (100%) |
 | `gate-evasion-v1` | Each fixture is a way a change once evaded a quality gate; the named gate runs on it through `GateRunner`, and only a gate finding counts as a catch | — | 8 classes | today 2/8, see `docs/eval/bench.md` |
-| `goal-drift-v1` | Trajectory goal drift measurement across contract boundaries with planted distractions | `CTRL-GOAL-ALIGNMENT`, `ASI01` | 10 fixtures | 1.0 (100%) |
+| `goal-drift-v1` | Trajectory goal drift measurement across contract boundaries with planted distractions | `CTRL-GOAL-ALIGNMENT`, `ASI01` | 10 fixtures | unmeasured by default; supply `--trajectory` |
 
 ---
 
@@ -40,7 +40,13 @@ The server is classified as `CRITICAL` and **MUST force an approval gate**. If n
 
 ## Goal-Drift Suite (`goal-drift-v1`)
 
-The `goal-drift-v1` benchmark measures where and when long-running agent trajectories deviate from explicit task contracts (`DriftContract`).
+The `goal-drift-v1` benchmark measures where and when long-running agent trajectories deviate from explicit task contracts (`DriftContract`). Input is trajectory JSON (schema documented in `goal_drift_suite.py`); an automatic converter from `.sdd` run journals is follow-up.
+
+### Default Baseline & Execution Options
+- **Default run (`no --trajectory`)**: Evaluates empty telemetry, records `unmeasured=True`, and fails closed honestly (`score 0.0, passed=False`).
+- **Real evaluation (`--trajectory <path>`)**: Ingests trajectory JSON (`events` and `diff`) and deterministically scores step-by-step drift curves without calling any model.
+- **Plumbing smoke tests (`--smoke-synthetic`)**: Synthesizes compliant mock trajectories for plumbing/smoke testing. Marks the adapter synthetic and strictly requires `--stub-signer` (preventing install-identity attestation).
+- **Step coverage (`--require-step-coverage`)**: By default, partial step coverage with zero drift is compliant; `--require-step-coverage` enforces 100% planned step coverage as a strict gate.
 
 ### Drift Contract Parameters
 - **`scope_paths`**: Allowed repository-relative POSIX files or directories.

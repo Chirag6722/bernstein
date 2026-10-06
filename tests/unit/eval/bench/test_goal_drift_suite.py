@@ -173,8 +173,29 @@ class TestGoalDriftDeterminismAndReplay:
 class TestGoalDriftEndToEndBundle:
     """AC-5: Bundle carries drift curves and threshold; verified offline."""
 
-    def test_run_goal_drift_suite_and_verify(self, goal_drift_suite: BenchSuite) -> None:
-        adapter = GoalDriftReplayAdapter(simulate_drift=False)
+    def test_run_goal_drift_suite_default_unmeasured(self, goal_drift_suite: BenchSuite) -> None:
+        adapter = GoalDriftReplayAdapter()
+        runner = BenchRunner(suite=goal_drift_suite, adapter=adapter, scheduler_config={"scheduler": "deterministic"})
+        bundle = StubSigner().sign(runner.run())
+
+        assert len(bundle.task_results) == len(goal_drift_suite.tasks)
+        assert bundle.overall_score == 0.0
+        assert bundle.pass_rate == 0.0
+
+        for result in bundle.task_results:
+            assert result.passed is False
+            assert "drift_curve" in result.receipt
+            assert result.receipt["drift_curve"]["unmeasured"] is True
+            assert result.receipt["drift_curve"]["passed_gate"] is False
+
+        # Verify offline: unmeasured failure is reproducible and matches
+        verifier = BenchVerifier(suite=goal_drift_suite, adapter=adapter, allow_stub_signature=True)
+        verification = verifier.verify(bundle)
+        assert verification.status == VerificationStatus.MATCH
+        assert verification.passed is True
+
+    def test_run_goal_drift_suite_smoke_synthetic(self, goal_drift_suite: BenchSuite) -> None:
+        adapter = GoalDriftReplayAdapter(smoke_synthetic=True)
         runner = BenchRunner(suite=goal_drift_suite, adapter=adapter, scheduler_config={"scheduler": "deterministic"})
         bundle = StubSigner().sign(runner.run())
 
@@ -182,12 +203,11 @@ class TestGoalDriftEndToEndBundle:
         assert bundle.overall_score == 1.0
         assert bundle.pass_rate == 1.0
 
-        # Each task result carries drift curve metadata
         for result in bundle.task_results:
+            assert result.passed is True
             assert "drift_curve" in result.receipt
             assert result.receipt["drift_curve"]["max_hard_drift"] == 0.0
 
-        # Verify offline
         verifier = BenchVerifier(suite=goal_drift_suite, adapter=adapter, allow_stub_signature=True)
         verification = verifier.verify(bundle)
         assert verification.status == VerificationStatus.MATCH
@@ -382,6 +402,40 @@ class TestGoalDriftBlockerRegressions:
         assert passed is False
         assert score == 0.0
 
+    def test_synthetic_attribute_and_is_synthetic_recognition(self) -> None:
+        """Finding 2: Adapter marks itself synthetic only when manufacturing verdicts."""
+        from bernstein.eval.bench.bench_cli import _is_synthetic
+
+        real_adapter = GoalDriftReplayAdapter()
+        assert real_adapter.synthetic is False
+        assert _is_synthetic(real_adapter) is False
+
+        smoke_adapter = GoalDriftReplayAdapter(smoke_synthetic=True)
+        assert smoke_adapter.synthetic is True
+        assert _is_synthetic(smoke_adapter) is True
+
+        sim_adapter = GoalDriftReplayAdapter(simulate_drift=True)
+        assert sim_adapter.synthetic is True
+        assert _is_synthetic(sim_adapter) is True
+
+    def test_require_step_coverage_gate_enforcement(self, sample_drift_task: GoalDriftTask) -> None:
+        """Finding 3: require_step_coverage enforces 100% planned step coverage."""
+        partial_events = [
+            {"seq": 0, "kind": "step.started", "step": 0, "touched_paths": ["src/auth/token.py"]},
+            {"seq": 1, "kind": "step.completed", "step": 0, "touched_paths": ["src/auth/token.py"]},
+        ]
+        curve_default = evaluate_trajectory_drift(
+            sample_drift_task, partial_events, threshold=0.0, require_step_coverage=False
+        )
+        assert curve_default.step_coverage < 1.0
+        assert curve_default.passed_gate is True
+
+        curve_strict = evaluate_trajectory_drift(
+            sample_drift_task, partial_events, threshold=0.0, require_step_coverage=True
+        )
+        assert curve_strict.step_coverage < 1.0
+        assert curve_strict.passed_gate is False
+
 
 # ===========================================================================
 # 7. CLI Execution
@@ -399,7 +453,7 @@ class TestGoalDriftCLI:
         runner = CliRunner()
         bundle_file = tmp_path / "drift_bundle.json"
 
-        # Run goal-drift-v1 suite
+        # Default run has no trajectory: records unmeasured and fails closed
         run_res = runner.invoke(
             bench_group,
             ["run", "goal-drift-v1", "--out", str(bundle_file), "--stub-signer"],
@@ -407,13 +461,59 @@ class TestGoalDriftCLI:
         assert run_res.exit_code == 0, run_res.output
         assert bundle_file.exists()
 
-        # Verify bundle
+        bundle_data = json.loads(bundle_file.read_text(encoding="utf-8"))
+        assert bundle_data["overall_score"] == 0.0
+        assert bundle_data["pass_rate"] == 0.0
+        assert all(r["receipt"]["drift_curve"]["unmeasured"] is True for r in bundle_data["task_results"])
+
+        # Verify bundle offline: MATCH
         verify_res = runner.invoke(
             bench_group,
             ["verify", str(bundle_file), "--suite", "goal-drift-v1", "--stub-signer"],
         )
         assert verify_res.exit_code == 0, verify_res.output
         assert "MATCH" in verify_res.output
+
+    def test_cli_run_smoke_synthetic_and_verify(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from bernstein.eval.bench.bench_cli import bench_group
+
+        runner = CliRunner()
+        bundle_file = tmp_path / "smoke_bundle.json"
+
+        run_res = runner.invoke(
+            bench_group,
+            ["run", "goal-drift-v1", "--out", str(bundle_file), "--smoke-synthetic", "--stub-signer"],
+        )
+        assert run_res.exit_code == 0, run_res.output
+        assert bundle_file.exists()
+
+        bundle_data = json.loads(bundle_file.read_text(encoding="utf-8"))
+        assert bundle_data["pass_rate"] == 1.0
+
+        verify_res = runner.invoke(
+            bench_group,
+            ["verify", str(bundle_file), "--suite", "goal-drift-v1", "--stub-signer"],
+        )
+        assert verify_res.exit_code == 0, verify_res.output
+        assert "MATCH" in verify_res.output
+
+    def test_cli_smoke_synthetic_refuses_install_identity(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from bernstein.eval.bench.bench_cli import bench_group
+
+        runner = CliRunner()
+        bundle_file = tmp_path / "refuse_bundle.json"
+
+        # Smoke-synthetic marks adapter synthetic, refusing install identity without --stub-signer
+        run_res = runner.invoke(
+            bench_group,
+            ["run", "goal-drift-v1", "--out", str(bundle_file), "--smoke-synthetic"],
+        )
+        assert run_res.exit_code != 0
+        assert "Refusing to sign this bundle with the install identity" in run_res.output
 
     def test_cli_run_with_external_trajectory_and_threshold(self, tmp_path: Path, goal_drift_suite: BenchSuite) -> None:
         from click.testing import CliRunner
@@ -459,3 +559,42 @@ class TestGoalDriftCLI:
         first_result = next(r for r in bundle_data["task_results"] if r["task_id"] == first_task.id)
         assert first_result["passed"] is False
         assert first_result["receipt"]["drift_curve"]["max_hard_drift"] == 1.0
+
+    def test_cli_run_with_require_step_coverage(self, tmp_path: Path, goal_drift_suite: BenchSuite) -> None:
+        from click.testing import CliRunner
+
+        from bernstein.eval.bench.bench_cli import bench_group
+
+        runner = CliRunner()
+        traj_file = tmp_path / "partial_traj.json"
+        bundle_file = tmp_path / "strict_bundle.json"
+
+        first_task = goal_drift_suite.tasks[0]
+        # Only cover step 0 with clean path
+        traj_content = {
+            first_task.id: {
+                "events": [
+                    {"step": 0, "touched_paths": ["src/auth/token.py"]},
+                ],
+            }
+        }
+        traj_file.write_text(json.dumps(traj_content), encoding="utf-8")
+
+        run_res = runner.invoke(
+            bench_group,
+            [
+                "run",
+                "goal-drift-v1",
+                "--out",
+                str(bundle_file),
+                "--trajectory",
+                str(traj_file),
+                "--require-step-coverage",
+                "--stub-signer",
+            ],
+        )
+        assert run_res.exit_code == 0, run_res.output
+        bundle_data = json.loads(bundle_file.read_text(encoding="utf-8"))
+        first_result = next(r for r in bundle_data["task_results"] if r["task_id"] == first_task.id)
+        assert first_result["passed"] is False
+        assert first_result["receipt"]["drift_curve"]["step_coverage"] < 1.0

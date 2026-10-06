@@ -703,7 +703,7 @@ docs/eval/
 
 ## Goal-Drift Suite (`goal-drift-v1`)
 
-The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically from lineage events and diffs without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
+The `goal-drift-v1` suite evaluates long-running agent trajectories for deviations from their task contracts (`DriftContract`). The evaluator consumes trajectory JSON (`events` and `diff`; schema documented in `goal_drift_suite.py`); an automatic converter from `.sdd` run journals is follow-up. Default execution without `--trajectory` evaluates empty telemetry, records `unmeasured=True`, and fails closed honestly. Pass `--trajectory <path>` with trajectory JSON to score agent runs, or `--smoke-synthetic` (requiring `--stub-signer`) for hermetic plumbing tests. By default, partial step coverage with zero drift is compliant; pass `--require-step-coverage` to enforce 100% planned step coverage as a strict gate. It measures repository-relative POSIX scope compliance and forbidden changes per step deterministically without model calls. Semantic behavioral verification (`required_behaviours` / `requirements_dropped`) is reserved.
 
 Controls covered: `CTRL-GOAL-ALIGNMENT`, `ASI01`.
 

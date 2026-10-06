@@ -70,9 +70,10 @@ def _get_suite(name: str):
 def _resolve_adapter(suite_obj: BenchSuite) -> ReplayAdapter:
     """The adapter that scores *suite_obj*: the suite's own, else the synthetic mock.
 
-    Only ``tool-surface-v1`` and ``gate-evasion-v1`` have an adapter that derives a verdict
-    from a run. Every other suite (``golden-v1`` and any ``.json`` suite) falls back to
-    ``MockReplayAdapter``, which passes everything; callers must check :func:`_is_synthetic`.
+    Only ``tool-surface-v1``, ``gate-evasion-v1``, and ``goal-drift-v1`` have an adapter
+    that derives a verdict from a run. Every other suite (``golden-v1`` and any ``.json``
+    suite) falls back to ``MockReplayAdapter``, which passes everything; callers must check
+    :func:`_is_synthetic`.
     """
     from bernstein.eval.bench.runner import MockReplayAdapter
 
@@ -241,6 +242,21 @@ def bench_group() -> None:
     help="Drift threshold tolerance for goal-drift suite.",
 )
 @click.option(
+    "--require-step-coverage",
+    is_flag=True,
+    default=False,
+    help="Enforce 100% step coverage as a strict gate for goal-drift suite.",
+)
+@click.option(
+    "--smoke-synthetic",
+    is_flag=True,
+    default=False,
+    help=(
+        "Synthesize compliant mock trajectories for plumbing/smoke testing "
+        "(labels adapter synthetic; requires --stub-signer)."
+    ),
+)
+@click.option(
     "--ci",
     is_flag=True,
     default=False,
@@ -284,6 +300,8 @@ def bench_run(
     trajectory: Path | None = None,
     diff_file: Path | None = None,
     threshold: float = 0.0,
+    require_step_coverage: bool = False,
+    smoke_synthetic: bool = False,
     ci: bool = False,
     sarif_out: str | None = None,
     baseline: str | None = None,
@@ -353,6 +371,7 @@ def bench_run(
         _run_reliability(suite_obj, scheduler, reliability_k, Path(out), stub_signer)
         return
 
+    adapter: ReplayAdapter
     if suite_obj.version == "goal-drift-v1":
         from bernstein.eval.bench.goal_drift_suite import GoalDriftReplayAdapter
 
@@ -369,6 +388,8 @@ def bench_run(
             trajectory_data=trajectory_data,
             diff_text=diff_text,
             threshold=threshold,
+            smoke_synthetic=smoke_synthetic,
+            require_step_coverage=require_step_coverage,
         )
     else:
         adapter = _resolve_adapter(suite_obj)
