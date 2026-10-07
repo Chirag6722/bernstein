@@ -64,6 +64,31 @@ write boundary.
 | `bernstein trace verify <trace-id>`    | Confirm the on-disk bytes match the indexed hash. |
 | `bernstein trace reindex`              | Rebuild `index.jsonl` from the blob tree.         |
 
+### `trace follow` output and stop conditions
+
+`--out` writes whatever the flags say, never what the file is called:
+
+| flags | file contents |
+| --- | --- |
+| `--out` | the rendered text table |
+| `--out --as-json` | one JSON array |
+| `--out --live` | the rendered text table, appended as rows arrive |
+| `--out --as-json --live` | JSONL, one object per line |
+
+A followed file is appended to while the run is open, which a JSON array cannot
+be, so `--live` with `--as-json` is JSONL rather than an array. The file suffix
+is not consulted: `--out trace.json` without `--as-json` is a text table.
+
+`--live` stops when the entity reaches a terminal state in the **work ledger** --
+`run.closed` for a run, or `task.completed` / `task.failed` / `task.abandoned`
+for a task -- or on interrupt. The ledger's task kinds are a one-way lifecycle
+with no retry kind; the `task_retried` event belongs to the trace recorder, a
+different stream, so it does not reopen a task the ledger has closed.
+
+`--since` accepts either identifier or either content hash: `trace:<id>`, `<id>`
+and a trace's `sha256`, or `ledger:<run>:<seq>`, `<run>:<seq>` and a ledger
+entry's `entry_hash`.
+
 `trace serve` binds to loopback by default. To expose the viewer on a
 specific interface (e.g. when running inside a sandbox), pass
 `--bind 0.0.0.0` explicitly. Bernstein never opens it on a public

@@ -1263,7 +1263,11 @@ def _entry_matches_since(row: tuple[float, str, dict[str, Any]], since_id: str) 
         return True
     source = data.get("source")
     if source == "trace":
-        if since_id == data.get("trace_id"):
+        # Trace rows carry a content hash (``sha256``) the same way ledger rows
+        # carry ``entry_hash``, and ``trace verify`` proves it, so --since takes
+        # either spelling. Accepting only the id would make "resume from the
+        # hash I was given" work for one of the two sources.
+        if since_id in (data.get("trace_id"), data.get("sha256")):
             return True
     elif source == "ledger":
         run_id = data.get("run_id")
@@ -1274,7 +1278,20 @@ def _entry_matches_since(row: tuple[float, str, dict[str, Any]], since_id: str) 
 
 
 def _is_entity_terminal(sdd_dir: Path, entity_id: str, ledger_entries: list[tuple[str, Any]]) -> bool:
-    """Check if the referenced run or task has reached a closed/terminal state."""
+    """Check if the referenced run or task has reached a closed/terminal state.
+
+    ``task.failed`` is terminal *in the work ledger*. The ledger's task kinds
+    are a one-way lifecycle -- scheduled, started, then completed / failed /
+    abandoned (plus suspended) -- with no retry kind, and ``insights.py`` reads
+    completed and failed as the pair of final outcomes. The ``task_retried``
+    event lives in the trace recorder, a different stream this function does
+    not read, so a retry recorded there does not make a ledger ``task.failed``
+    provisional. That is why the first terminal entry is enough and no
+    latest-state scan is needed.
+
+    Entity may be a run or a task. For a run, terminal means ``run.closed``.
+    For a task, it means one of the three task outcomes above.
+    """
     from bernstein.core.persistence.work_ledger import (
         KIND_RUN_CLOSED,
         KIND_TASK_ABANDONED,
@@ -1374,6 +1391,16 @@ def trace_follow_cmd(
 
     matches, ledger_entries, rows = _collect_follow_entries(traces_path, entity_id)
 
+    # Live mode resumes from everything that exists now, not from the --since
+    # window. The poll loop re-collects unfiltered, so seeding seen_ids from the
+    # filtered rows would re-emit every pre-since entry as new on the first
+    # poll -- the exact replay --since exists to avoid. Terminal detection has
+    # the same problem: a run.closed before the resume point is absent from the
+    # filtered ledger list, so the pre-loop check would miss an already-closed
+    # run and poll once before the in-loop check caught it.
+    live_seen_ids = {r[1] for r in rows}
+    unfiltered_ledger_entries = ledger_entries
+
     if not matches and not ledger_entries and not live:
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
@@ -1399,7 +1426,16 @@ def trace_follow_cmd(
     if as_json:
         json_output = json.dumps([row[2] for row in rows])
         if out_path:
-            _write_out(Path(out_path), json.dumps([row[2] for row in rows], indent=2) + "\n")
+            # The format follows --as-json and --live, never the file suffix.
+            # A completed run is one JSON array; a followed run is JSONL,
+            # because the file is appended to as rows arrive and an array
+            # cannot be extended a line at a time. Mixing the two -- an array
+            # written here and lines appended later -- produces a file no
+            # consumer can read, which is what the suffix rule used to do.
+            if live:
+                _write_out(Path(out_path), "".join(json.dumps(row[2]) + "\n" for row in rows))
+            else:
+                _write_out(Path(out_path), json.dumps([row[2] for row in rows], indent=2) + "\n")
         console.print_json(json_output)
     else:
         from rich.console import Console
@@ -1474,31 +1510,31 @@ def trace_follow_cmd(
                 file_console.print(msg)
 
         if out_path and file_console:
-            out_p = Path(out_path)
-            if out_p.suffix.lower() == ".json":
-                _write_out(out_p, json.dumps([r[2] for r in rows], indent=2) + "\n")
-            else:
-                _write_out(out_p, file_console.export_text())
+            # Text mode writes the rendered table whatever the file is called.
+            # Inferring JSON from a .json suffix meant `--out trace.json`
+            # without --as-json wrote an array here and then appended text
+            # lines in the live loop below.
+            _write_out(Path(out_path), file_console.export_text())
 
     if not live:
         return
 
-    if _is_entity_terminal(traces_path.parent, entity_id, ledger_entries):
+    if _is_entity_terminal(traces_path.parent, entity_id, unfiltered_ledger_entries):
         return
 
-    seen_ids = {r[1] for r in rows}
+    seen_ids = live_seen_ids
     console.print("[dim]--- following (Ctrl+C to stop) ---[/dim]")
 
     def _emit_live_row(r: tuple[float, str, dict[str, Any]]) -> None:
         if as_json:
             console.print_json(json.dumps(r[2]))
             if out_path:
-                out_p = Path(out_path)
-                if out_p.suffix.lower() == ".jsonl":
-                    with open(out_path, "a", encoding="utf-8") as fh:
-                        fh.write(json.dumps(r[2]) + "\n")
-                else:
-                    _write_out(out_p, json.dumps([row[2] for row in cur_rows], indent=2) + "\n")
+                # Append one JSON object per line, matching the JSONL the
+                # pre-loop write produced for --live. Rewriting the whole
+                # array on every row was O(n^2) in file writes and raced any
+                # reader tailing the file.
+                with open(out_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(r[2]) + "\n")
         else:
             ts_str = _trace_timestamp(r[0])
             src = r[2].get("source")

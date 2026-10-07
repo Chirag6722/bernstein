@@ -156,3 +156,88 @@ def test_live_follow_streams_new_entries_until_run_terminates(sdd_dir: Path, tra
     assert code == 0
     assert "task.completed" in output
     assert "run terminated" in output
+
+
+def test_since_with_live_does_not_replay_history_before_the_resume_point(sdd_dir: Path, traces_dir: Path) -> None:
+    """`--since` + `--live` is "reconnect without replaying", so it must not replay.
+
+    The poll loop re-collects unfiltered, so seeding the seen set from the
+    post-`--since` rows made every pre-since entry look new on the first poll --
+    the command replayed exactly the history it was asked to skip.
+    """
+    run_path = _ledger_dir(sdd_dir, "run-resume")
+    ledger = WorkLedger.open(run_path)
+    ledger.append(kind="agent.claimed", task_id="T-resume", payload={})
+    ledger.append(kind="task.started", task_id="T-resume", payload={})
+    ledger.close()
+
+    # Resume after the first entry, so the second is the only pre-existing row
+    # the static render should show.
+    code, output = _follow(traces_dir, "T-resume", "--since", "run-resume:0")
+    assert code == 0, output
+    assert "task.started" in output
+
+    def _append_later() -> None:
+        time.sleep(0.05)
+        bg = WorkLedger.open(run_path)
+        bg.append(kind="task.completed", task_id="T-resume", payload={"outcome": "ok"})
+        bg.append(kind="run.closed", task_id="", payload={"status": "done"})
+        bg.close()
+
+    writer = threading.Thread(target=_append_later)
+    writer.start()
+    code, live_output = _follow(traces_dir, "T-resume", "--since", "run-resume:0", "--live", "--poll-interval", "0.01")
+    writer.join()
+
+    assert code == 0, live_output
+    # The entry before the resume point must not be re-emitted by the loop.
+    assert live_output.count("agent.claimed") == 0, live_output
+    # The genuinely new entry still arrives.
+    assert "task.completed" in live_output
+
+
+def test_live_out_file_is_one_format_throughout(sdd_dir: Path, traces_dir: Path, tmp_path: Path) -> None:
+    """A `--live --out` file is readable by one parser, whatever it is called.
+
+    The format follows `--as-json` and `--live`, never the suffix. Text mode
+    wrote a JSON array for a `.json` name and then appended plain-text rows to
+    the same file, leaving a document no consumer could read.
+    """
+    run_path = _ledger_dir(sdd_dir, "run-fmt")
+    ledger = WorkLedger.open(run_path)
+    ledger.append(kind="agent.claimed", task_id="T-fmt", payload={})
+    ledger.close()
+
+    def _close_later() -> None:
+        time.sleep(0.05)
+        bg = WorkLedger.open(run_path)
+        bg.append(kind="task.completed", task_id="T-fmt", payload={"outcome": "ok"})
+        bg.append(kind="run.closed", task_id="", payload={"status": "done"})
+        bg.close()
+
+    # Text mode, JSON-looking name: stays text.
+    out_txt = tmp_path / "live.json"
+    t = threading.Thread(target=_close_later)
+    t.start()
+    code, _ = _follow(traces_dir, "T-fmt", "--live", "--poll-interval", "0.01", "--out", str(out_txt))
+    t.join()
+    assert code == 0
+    body = out_txt.read_text(encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(body)
+    assert "agent.claimed" in body
+
+    # JSON mode under --live: JSONL, every line parsing on its own.
+    run2 = _ledger_dir(sdd_dir, "run-fmt2")
+    l2 = WorkLedger.open(run2)
+    l2.append(kind="agent.claimed", task_id="T-fmt2", payload={})
+    l2.append(kind="run.closed", task_id="", payload={"status": "done"})
+    l2.close()
+
+    out_jsonl = tmp_path / "live.txt"
+    code, _ = _follow(traces_dir, "T-fmt2", "--live", "--poll-interval", "0.01", "--as-json", "--out", str(out_jsonl))
+    assert code == 0
+    lines = [ln for ln in out_jsonl.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines, "expected at least one JSONL row"
+    for ln in lines:
+        json.loads(ln)
