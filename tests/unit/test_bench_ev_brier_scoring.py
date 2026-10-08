@@ -13,6 +13,7 @@ ones from the superseded #5611.
 
 from __future__ import annotations
 
+import pytest
 from benchmarks.swe_bench.metrics import InstanceResult, ScenarioSummary, aggregate
 
 
@@ -21,7 +22,7 @@ def _result(
     *,
     resolved: bool = False,
     reason: str = "",
-    confidence: float = 1.0,
+    confidence: float | None = None,
 ) -> InstanceResult:
     return InstanceResult(
         instance_id=f"inst-{status}-{reason or 'x'}-{confidence}",
@@ -92,7 +93,7 @@ class TestExpectedValue:
         )
         assert summary.expected_value == 0.0
 
-    def test_errors_excluded_from_ev(self) -> None:
+    def test_errors_incur_no_lambda_penalty_but_stay_in_the_denominator(self) -> None:
         """Harness errors are not wrong answers, so they don't incur lambda.
 
         1 resolved, 1 error → attempted=1, EV = 1.0.
@@ -103,12 +104,11 @@ class TestExpectedValue:
                 _result("error"),
             ]
         )
-        # errors are excluded: attempted = total - skipped - abstained = 2 - 0 - 0 = 2
-        # But failed = 0 (error is not failed), so EV = (1 - 0.5*0) / 2... wait
-        # Let me re-check. The issue says:
-        #   EV = (resolved·1 + abstained·0 + wrong·(-λ)) / attempted
-        # where "wrong" is failed (not errors). Attempted = total - skipped - abstained.
-        # So: attempted = 2, resolved = 1, failed = 0, EV = (1 - 0) / 2 = 0.5
+        # An error stays in the denominator but incurs no penalty: the run
+        # attempted the instance, so it counts as an attempt, but a harness
+        # failure is not a wrong answer and λ weights wrongness.
+        # attempted = 2 - skipped(0) - abstained(0) = 2, resolved = 1, failed = 0
+        # EV = (1 - 0.5 * 0) / 2 = 0.5
         assert summary.expected_value == 0.5
 
     def test_skipped_excluded_from_ev(self) -> None:
@@ -210,8 +210,13 @@ class TestBrierScore:
 class TestConfidenceField:
     """The confidence field on InstanceResult."""
 
-    def test_default_confidence_is_one(self) -> None:
-        """Pre-existing results without confidence are implicitly fully confident."""
+    def test_a_result_that_declared_nothing_has_no_confidence(self) -> None:
+        """Absence, not a default. A run that declared no confidence has None.
+
+        Defaulting to 1.0 scored silence as maximal overconfidence: a failed
+        legacy result contributed the worst possible Brier term from a run
+        that never expressed a probability.
+        """
         result = InstanceResult(
             instance_id="old-1",
             scenario_name="solo",
@@ -221,7 +226,7 @@ class TestConfidenceField:
             total_tokens=10,
             total_cost_usd=0.01,
         )
-        assert result.confidence == 1.0
+        assert result.confidence is None
 
     def test_confidence_round_trips(self) -> None:
         """Serialise → deserialise preserves confidence."""
@@ -230,7 +235,7 @@ class TestConfidenceField:
         assert restored.confidence == 0.85
 
     def test_legacy_result_without_confidence_loads(self) -> None:
-        """A result written before confidence existed still loads."""
+        """A result written before confidence existed loads, declaring nothing."""
         legacy = {
             "instance_id": "old-1",
             "scenario_name": "solo",
@@ -244,7 +249,7 @@ class TestConfidenceField:
             "patch": "",
         }
         loaded = InstanceResult.from_dict(legacy)
-        assert loaded.confidence == 1.0
+        assert loaded.confidence is None
 
 
 # ---------- ScenarioSummary round-trip ----------
@@ -299,3 +304,46 @@ class TestSummaryRoundTrip:
         assert abs(restored.expected_value - original.expected_value) < 1e-9
         assert abs(restored.brier_score - original.brier_score) < 1e-9
         assert restored.lambda_penalty == original.lambda_penalty
+
+
+class TestLambdaIsAParameter:
+    """λ is the operator's stated risk appetite, so it has to be settable (#5923)."""
+
+    def test_a_higher_lambda_penalises_wrong_answers_harder(self) -> None:
+        results = [_result("resolved", resolved=True), _result("failed")]
+        # attempted = 2, resolved = 1, failed = 1  ->  EV = (1 - λ) / 2
+        assert aggregate(results, lambda_penalty=0.0).expected_value == 0.5
+        assert aggregate(results, lambda_penalty=0.5).expected_value == 0.25
+        assert aggregate(results, lambda_penalty=1.0).expected_value == 0.0
+
+    def test_the_default_is_unchanged_and_is_recorded_on_the_summary(self) -> None:
+        """A reader has to know which appetite produced the number."""
+        results = [_result("resolved", resolved=True), _result("failed")]
+        assert aggregate(results).lambda_penalty == 0.5
+        assert aggregate(results, lambda_penalty=0.8).lambda_penalty == 0.8
+
+
+class TestUndeclaredConfidenceIsNotScored:
+    """Brier scores declared probabilities, so silence leaves the mean (#5923)."""
+
+    def test_results_without_a_declared_confidence_leave_the_brier_mean(self) -> None:
+        # One declared, perfectly calibrated; one undeclared and wrong. If the
+        # undeclared one were scored as 1.0 it would contribute a term of 1.0
+        # and drag the mean to 0.5.
+        summary = aggregate(
+            [
+                _result("resolved", resolved=True, confidence=1.0),
+                _result("failed", confidence=None),
+            ]
+        )
+        assert summary.brier_score == 0.0
+
+    def test_all_undeclared_scores_nothing_rather_than_scoring_zero_confidence(self) -> None:
+        summary = aggregate([_result("resolved", resolved=True), _result("failed")])
+        assert summary.brier_score == 0.0
+
+    def test_a_declared_confidence_outside_zero_to_one_is_refused(self) -> None:
+        """Brier does not notice an out-of-range probability; it just skews."""
+        for bad in (5.0, -0.1, 1.5):
+            with pytest.raises(ValueError, match=r"probability in \[0, 1\]"):
+                _result("failed", confidence=bad)

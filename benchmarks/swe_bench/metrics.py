@@ -58,12 +58,26 @@ class InstanceResult:
     #: abstention is not one. Separate from `error_message`, which says the
     #: HARNESS broke; this says the run worked and declined to answer.
     abstention_reason: str = ""
-    #: The run's declared probability that its patch resolves the instance,
-    #: ∈ [0, 1]. Defaults to 1.0 (fully confident) so results written before
-    #: this field existed deserialise unchanged. Used by Brier-calibration
-    #: scoring (#5923): ``mean((confidence - outcome)**2)`` over evaluated
-    #: instances.
-    confidence: float = 1.0
+    #: The run's *declared* probability that its patch resolves the instance,
+    #: ∈ [0, 1], or ``None`` when the run declared nothing. Used by
+    #: Brier-calibration scoring (#5923): ``mean((confidence - outcome)**2)``
+    #: over evaluated instances that declared a confidence.
+    #:
+    #: ``None``, never a default value. A result written before this field
+    #: existed made no prediction, and defaulting it to 1.0 would score that
+    #: silence as maximal overconfidence -- a failed legacy result would
+    #: contribute ``(1.0 - 0)**2 = 1.0``, the worst possible Brier term, from
+    #: a run that never expressed a confidence. Calibration measures what the
+    #: run said; a number it did not say is not data about it.
+    confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        # A probability outside [0, 1] is not one, and Brier does not notice:
+        # a confidence of 5.0 on a failed instance yields a term of 25 and
+        # drags the mean without erroring. Refuse it where it enters.
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            msg = f"confidence must be a probability in [0, 1], got {self.confidence!r}"
+            raise ValueError(msg)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -75,8 +89,10 @@ class InstanceResult:
         traces = [AgentTrace(**t) for t in raw_traces] if isinstance(raw_traces, list) else []  # type: ignore[arg-type]
         # Results written before #5567 have no abstention field.
         payload.setdefault("abstention_reason", "")
-        # Results written before #5923 have no confidence field.
-        payload.setdefault("confidence", 1.0)
+        # Results written before #5923 have no confidence field, and absence
+        # is the honest value: they declared none. `None` deserialises them
+        # identically to the old default without inventing a prediction.
+        payload.setdefault("confidence", None)
         return cls(**payload, agent_traces=traces)  # type: ignore[arg-type]
 
 
@@ -199,8 +215,17 @@ def _coerce_int(value: object) -> int:
     return 0
 
 
-def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
-    """Compute summary statistics for a list of instance results."""
+def aggregate(results: list[InstanceResult], *, lambda_penalty: float = 0.5) -> ScenarioSummary:
+    """Compute summary statistics for a list of instance results.
+
+    Args:
+        results: The per-instance results to summarise.
+        lambda_penalty: Weight of a wrong answer in :attr:`expected_value`,
+            the operator's stated risk appetite. Ranking runs *under a stated
+            appetite* is the point of the metric, so it is a parameter rather
+            than a constant; the recorded value travels on the summary so a
+            reader knows which appetite produced the number.
+    """
     if not results:
         raise ValueError("Cannot aggregate empty results list")
 
@@ -245,16 +270,22 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
     # harness error is not the run being confidently wrong, and counting it as
     # one would move EV for something the run did not cause. Same exclusion
     # rule as `confident_error_rate` above.
-    lambda_penalty = 0.5
     expected_value = (resolved - lambda_penalty * failed) / attempted if attempted > 0 else 0.0
 
     # -- Brier calibration score (#5923) ---------------------------------------
     # mean((confidence - outcome)^2) over evaluated instances. Evaluated means
-    # the run made a prediction: not skipped, not abstained, not a harness error.
-    # `outcome` is 1 when resolved, 0 otherwise.
-    evaluated = [r for r in results if r.status not in ("skipped", "error", "abstained")]
+    # the run made a prediction: not skipped, not abstained, not a harness error,
+    # and it declared a confidence. `outcome` is 1 when resolved, 0 otherwise.
+    #
+    # A result with no declared confidence leaves the mean entirely rather than
+    # contributing an assumed one: Brier measures how well a declared
+    # probability tracked reality, and there is nothing to score when none was
+    # declared.
+    evaluated = [r for r in results if r.status not in ("skipped", "error", "abstained") and r.confidence is not None]
     if evaluated:
-        brier_score = statistics.mean((r.confidence - (1.0 if r.resolved else 0.0)) ** 2 for r in evaluated)
+        brier_score = statistics.mean(
+            (r.confidence - (1.0 if r.resolved else 0.0)) ** 2 for r in evaluated if r.confidence is not None
+        )
     else:
         brier_score = 0.0
 
