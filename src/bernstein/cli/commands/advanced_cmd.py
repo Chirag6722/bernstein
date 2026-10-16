@@ -1310,14 +1310,31 @@ def _is_entity_terminal(sdd_dir: Path, entity_id: str, ledger_entries: list[tupl
         if entry.task_id == entity_id and entry.kind in terminal_task_kinds:
             return True
 
+    from bernstein.core.security.path_containment import PathContainmentError, contained_path
+
     ledger_root = sdd_dir / "runtime" / "ledger"
+
+    def _run_dir(name: str) -> Path | None:
+        """The ledger directory for *name*, or None when it is not one.
+
+        ``entity_id`` is an argv value, so joining it raw let `../..` walk out
+        of the ledger root and probe the filesystem through `is_dir`. The
+        containment join is the same one the rest of this file uses for a
+        journal path; a name that escapes is simply not a run directory.
+        """
+        try:
+            return contained_path(ledger_root, name, label="entity id")
+        except PathContainmentError:
+            return None
+
     if ledger_root.is_dir():
-        if (ledger_root / entity_id).is_dir():
+        entity_dir = _run_dir(entity_id)
+        if entity_dir is not None and entity_dir.is_dir():
             related_runs.add(entity_id)
 
         for run_name in related_runs:
-            run_dir = ledger_root / run_name
-            if run_dir.is_dir():
+            run_dir = _run_dir(run_name)
+            if run_dir is not None and run_dir.is_dir():
                 reader = LedgerReader(run_dir)
                 if any(e.kind == KIND_RUN_CLOSED for e in reader.entries()):
                     return True
@@ -1359,8 +1376,10 @@ def _is_entity_terminal(sdd_dir: Path, entity_id: str, ledger_entries: list[tupl
     "poll_interval",
     default=0.2,
     hidden=True,
-    type=float,
-    help="Polling interval in seconds for live mode.",
+    # Floored: 0 or a negative interval turns the follow loop into a busy spin
+    # that re-reads the trace store and the ledger as fast as the disk allows.
+    type=click.FloatRange(min=0.01),
+    help="Polling interval in seconds for live mode (minimum 0.01).",
 )
 @click.pass_context
 def trace_follow_cmd(
@@ -1401,7 +1420,13 @@ def trace_follow_cmd(
     live_seen_ids = {r[1] for r in rows}
     unfiltered_ledger_entries = ledger_entries
 
-    if not matches and not ledger_entries and not live:
+    if not matches and not ledger_entries:
+        # Under --live this used to fall through and poll forever: with no
+        # ledger entries the terminal check can never fire, so an entity that
+        # does not exist (a typo, a finished run already pruned) held the
+        # terminal open until it was killed. Following something only makes
+        # sense once the ledger knows about it, so refuse the same way the
+        # static path does.
         console.print(f"[yellow]No trace entries reference:[/yellow] {entity_id}")
         raise SystemExit(1)
 
@@ -1419,9 +1444,18 @@ def trace_follow_cmd(
         matches = [m for m in matches if f"trace:{m.trace_id}" in retained_row_ids]
         ledger_entries = [le for le in ledger_entries if f"ledger:{le[0]}:{le[1].seq}" in retained_row_ids]
 
+    # A capture that continues an earlier one appends; a one-shot capture
+    # replaces. `--since` means "carry on from where I stopped", so truncating
+    # the file it is pointed at threw away the part the resume was relative to.
+    _resuming = bool(since_id)
+
     def _write_out(target: Path, content: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if _resuming and target.exists():
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(content)
+        else:
+            target.write_text(content, encoding="utf-8")
 
     if as_json:
         json_output = json.dumps([row[2] for row in rows])
@@ -1432,11 +1466,26 @@ def trace_follow_cmd(
             # cannot be extended a line at a time. Mixing the two -- an array
             # written here and lines appended later -- produces a file no
             # consumer can read, which is what the suffix rule used to do.
-            if live:
+            # One JSON array only for a complete, one-shot capture. A stream
+            # that continues -- because it is followed, or because it resumes
+            # an earlier capture with --since -- is JSONL: an array cannot be
+            # appended to, and both of those append.
+            if live or _resuming:
                 _write_out(Path(out_path), "".join(json.dumps(row[2]) + "\n" for row in rows))
             else:
                 _write_out(Path(out_path), json.dumps([row[2] for row in rows], indent=2) + "\n")
-        console.print_json(json_output)
+        # stdout follows the same rule as the file. Under --live the stream is
+        # appended to as rows arrive, so it is JSONL on both: printing an array
+        # here and then one loose object per row left stdout unparseable by any
+        # single reader, which is the same defect the file had.
+        if live:
+            # click.echo, not the Rich console: Rich soft-wraps at the terminal
+            # width, which splits a long JSONL row across lines and leaves the
+            # stream unparseable. Machine-readable output must not be laid out.
+            for row in rows:
+                click.echo(json.dumps(row[2]))
+        else:
+            console.print_json(json_output)
     else:
         from rich.console import Console
         from rich.table import Table
@@ -1527,7 +1576,9 @@ def trace_follow_cmd(
 
     def _emit_live_row(r: tuple[float, str, dict[str, Any]]) -> None:
         if as_json:
-            console.print_json(json.dumps(r[2]))
+            # One compact object per line, unwrapped: this is the
+            # continuation of the JSONL stream the pre-loop write started.
+            click.echo(json.dumps(r[2]))
             if out_path:
                 # Append one JSON object per line, matching the JSONL the
                 # pre-loop write produced for --live. Rewriting the whole

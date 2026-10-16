@@ -74,12 +74,21 @@ write boundary.
 | `--out --as-json` | one JSON array |
 | `--out --live` | the rendered text table, appended as rows arrive |
 | `--out --as-json --live` | JSONL, one object per line |
+| `--out --as-json --since` | JSONL, appended to the existing file |
+
+One JSON array only for a complete, one-shot capture. A stream that continues
+-- because it is followed, or because `--since` resumes an earlier capture --
+is JSONL and is appended rather than replacing the file: an array cannot be
+extended a line at a time, and truncating would throw away the capture the
+resume was relative to. The same rule governs stdout, so `--as-json --live`
+prints one object per line there too rather than an array followed by loose
+objects.
 
 A followed file is appended to while the run is open, which a JSON array cannot
 be, so `--live` with `--as-json` is JSONL rather than an array. The file suffix
 is not consulted: `--out trace.json` without `--as-json` is a text table.
 
-`--live` stops when the entity reaches a terminal state in the **work ledger** --
+`--live` refuses outright when nothing in the trace store or the ledger references the entity -- with no ledger entries the terminal check can never fire, so following would never end. Otherwise it stops when the entity reaches a terminal state in the **work ledger** --
 `run.closed` for a run, or `task.completed` / `task.failed` / `task.abandoned`
 for a task -- or on interrupt. The ledger's task kinds are a one-way lifecycle
 with no retry kind; the `task_retried` event belongs to the trace recorder, a

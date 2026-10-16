@@ -241,3 +241,81 @@ def test_live_out_file_is_one_format_throughout(sdd_dir: Path, traces_dir: Path,
     assert lines, "expected at least one JSONL row"
     for ln in lines:
         json.loads(ln)
+
+
+class TestFollowHardening:
+    """The five issues from the #6397 second review."""
+
+    def test_entity_id_cannot_walk_out_of_the_ledger_root(self, sdd_dir: Path) -> None:
+        """ENTITY_ID is argv, so a traversal must not reach outside the root.
+
+        Tested against `_is_entity_terminal` directly rather than through the
+        CLI: the command exits early on "no entries" whatever the id, so a
+        CLI-level assertion passes with or without the containment join and
+        proves nothing. This reaches the join itself.
+        """
+        from bernstein.cli.commands.advanced_cmd import _is_entity_terminal
+
+        # A directory the traversal would reach if the join were raw, holding a
+        # ledger whose run.closed would otherwise be read as this entity's.
+        outside = sdd_dir / "runtime" / "escaped"
+        outside.mkdir(parents=True)
+        victim = WorkLedger.open(outside)
+        victim.append(kind="run.closed", task_id="", payload={"status": "done"})
+        victim.close()
+        (sdd_dir / "runtime" / "ledger").mkdir(parents=True, exist_ok=True)
+
+        # ../escaped resolves outside <sdd>/runtime/ledger. Raw joining would
+        # find the directory and report the entity terminal from someone
+        # else's ledger; the contained join refuses the name outright.
+        assert _is_entity_terminal(sdd_dir, "../escaped", []) is False
+
+    def test_live_with_no_entries_exits_instead_of_polling_forever(self, sdd_dir: Path, traces_dir: Path) -> None:
+        """With nothing in the ledger the terminal check can never fire."""
+        code, output = _follow(traces_dir, "T-nothing", "--live", "--poll-interval", "0.01")
+        assert code == 1
+        assert "No trace entries reference" in output
+
+    def test_poll_interval_has_a_floor(self, traces_dir: Path) -> None:
+        """0 turns the follow loop into a busy spin."""
+        code, output = _follow(traces_dir, "T-x", "--live", "--poll-interval", "0")
+        assert code != 0
+        assert "0.01" in output or "not in the range" in output.lower()
+
+    def test_as_json_live_stdout_is_jsonl_throughout(self, sdd_dir: Path, traces_dir: Path) -> None:
+        """stdout follows the same rule as the file: no array then loose objects."""
+        run_path = _ledger_dir(sdd_dir, "run-sj")
+        ledger = WorkLedger.open(run_path)
+        ledger.append(kind="agent.claimed", task_id="T-sj", payload={})
+        ledger.append(kind="run.closed", task_id="", payload={"status": "done"})
+        ledger.close()
+
+        code, output = _follow(traces_dir, "T-sj", "--live", "--as-json", "--poll-interval", "0.01")
+        assert code == 0
+        payload = [ln for ln in output.splitlines() if ln.strip().startswith("{")]
+        assert payload, output
+        for line in payload:
+            json.loads(line)
+        assert "[" not in output.split("\n")[0], output.splitlines()[:3]
+
+    def test_since_with_out_appends_rather_than_losing_the_earlier_capture(
+        self, sdd_dir: Path, traces_dir: Path, tmp_path: Path
+    ) -> None:
+        """--since means "carry on", so the file it points at must grow."""
+        run_path = _ledger_dir(sdd_dir, "run-ap")
+        ledger = WorkLedger.open(run_path)
+        ledger.append(kind="agent.claimed", task_id="T-ap", payload={})
+        ledger.append(kind="task.started", task_id="T-ap", payload={})
+        ledger.close()
+
+        out = tmp_path / "capture.jsonl"
+        code, _ = _follow(traces_dir, "T-ap", "--as-json", "--out", str(out))
+        assert code == 0
+        first = out.read_text(encoding="utf-8")
+        assert first.strip()
+
+        code, _ = _follow(traces_dir, "T-ap", "--since", "run-ap:0", "--as-json", "--out", str(out))
+        assert code == 0
+        second = out.read_text(encoding="utf-8")
+        assert second.startswith(first), "the earlier capture was truncated away"
+        assert len(second) > len(first), "the resume added nothing"
