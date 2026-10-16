@@ -956,6 +956,7 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein mandate` | Verifiable spending mandates as journal-anchored consent receipts (group): `emit` / `verify` / `revoke`. | `cli/commands/mandate_cmd.py` |
 | `bernstein compaction` | Compaction receipt-chain ops (group). | `cli/commands/compaction_cmd.py:32` |
 | `bernstein quarantine` | Quarantined-task ops (group). | `cli/commands/advanced_cmd.py:1120` |
+| `bernstein trust` | Grant, show (`--status`) or revoke (`--revoke`) workspace trust: script hooks, plugin hooks and workflow command nodes run only in a trusted workspace. | `cli/commands/trust_cmd.py:trust_cmd` |
 | `bernstein approve-tool` | Approve a tool-call request (alias; flag form `approve --tool <id>`). | `cli/commands/approval_cmd.py:approve_tool_cmd` |
 | `bernstein reject-tool` | Reject a tool-call request (alias; flag form `reject --tool <id>`). | `cli/commands/approval_cmd.py:reject_tool_cmd` |
 | `bernstein review-receipt` | Attested PR review receipts binding issue / plan / tool calls / diff (group): `emit` / `verify`. | `cli/commands/review_receipt_cmd.py` |
@@ -970,6 +971,8 @@ The group also accepts `--web [host:]port` to run the web view instead of the TU
 | `bernstein govern posture` | Score the install's governance posture from chain-evidenced facts only: per-control coverage over the lineage log, no configuration read. Names every contributing chain event, the weights version, and its own denominator (the weight that was measurable). Signed with the audit-chain key; `--json-output` prints the canonical document. | `cli/commands/governance_cmd.py` |
 | `bernstein govern inventory --render` | Emit the inventory topology graph from a store as mermaid or dot. Same store, same bytes. | `cli/commands/govern_cmd.py` |
 | `bernstein govern reconcile` | Diff the adapter / lane / schedule / capability surface against a desired-state document and record it. | `cli/commands/govern_cmd.py` |
+| `bernstein govern audit` | Run registered governance audit checks across the workspace with `--list`, `--only <AREA>`, `--skip <ID>`, and `--json`. | `cli/commands/govern_audit_cmd.py` |
+| `bernstein govern audit-keys` | Check whether verifier keys are stale relative to the install identity. | `cli/commands/governance_cmd.py` |
 | `bernstein governance ...` | Deprecated alias for `bernstein govern`, removed in v4.0.0 (#5010). | `cli/commands/governance_cmd.py` |
 | `bernstein pool` | Named sandbox pool ops (group): `register`, `list`, `show`, `verify`. Projected from audit chain. Distinct from `bernstein limits pool`. | `cli/commands/pool_cmd.py` |
 | `bernstein limits` | Lease-backed admission and concurrency limits (group): `pool`, `tag`, `rate`, `queue`, `status`, `verify`. Projected from admission ledger. Distinct from `bernstein pool`. | `cli/commands/limits_cmd.py` |

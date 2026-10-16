@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 
+from bernstein.adapters.base import AdapterCooldownError
 from bernstein.core import defaults as _defaults
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.agents.spawn_errors import ModelNotConfiguredError
@@ -72,10 +73,11 @@ from bernstein.core.tick_pipeline import (
     close_task,
     complete_task,
     fail_task,
+    release_task,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from bernstein.core.git_ops import MergeResult
@@ -654,6 +656,25 @@ def _extract_failure_context(
             logger.debug("Failed to record retry failure category metric: %s", exc)
 
     return failure_context
+
+
+def note_queued_retries(tasks: Iterable[Task], retried_task_ids: set[str]) -> None:
+    """Mark every task that already has a retry on the board as handled.
+
+    ``retried_task_ids`` lives in one orchestrator process, but the retries it
+    guards against duplicating live on the task server. A restarted
+    orchestrator starts with an empty set and, without this, queues a second
+    retry for every failure an earlier process already retried. A retry's
+    ``metadata["retry_of"]`` names its source, so the board itself answers.
+
+    Args:
+        tasks: Every task on the board, in any status.
+        retried_task_ids: Set of handled task IDs (mutated in-place).
+    """
+    for task in tasks:
+        source = task.metadata.get("retry_of")
+        if source:
+            retried_task_ids.add(str(source))
 
 
 def maybe_retry_task(
@@ -3158,6 +3179,18 @@ def claim_and_spawn_batches(
                 session.id,
                 session.agent_source,
             )
+        except AdapterCooldownError as exc:
+            # The adapter is backing off, the tasks did not fail. Failing them
+            # here spent their retry budget on every tick of the backoff until
+            # the lineage failed for good and its dependents were blocked.
+            # Hand the claims back untouched instead; the next tick after the
+            # backoff claims them again.
+            logger.info("Spawn deferred for batch %s: %s", [t.id for t in batch], exc)
+            for task in batch:
+                try:
+                    release_task(orch._client, base, task.id, f"spawn deferred: {exc}")
+                except Exception as rel_exc:
+                    logger.warning("Could not release task %s after adapter cooldown: %s", task.id, rel_exc)
         except (OSError, RuntimeError, ValueError, RouterError) as exc:
             logger.error("Spawn failed for batch %s: %s", [t.id for t in batch], exc)
             result.errors.append(f"spawn: {exc}")
@@ -5061,6 +5094,12 @@ def process_completed_tasks(
         if task.id in orch._processed_done_tasks:
             continue
         orch._processed_done_tasks[task.id] = None
+        # A failed task (the quiescence pass hands those in too) is registered for
+        # the drain tracker only: it has no completion to verify or merge, and the
+        # retry machinery already decided it. Running the chain on it let a janitor
+        # FAIL reopen retried and permanently failed tasks.
+        if task.status != TaskStatus.DONE:
+            continue
         new_tasks.append(task)
 
     if not new_tasks:
